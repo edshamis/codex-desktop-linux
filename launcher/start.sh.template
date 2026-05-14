@@ -80,6 +80,8 @@ Environment:
                               Auto-detect WSLg, keep generic Linux defaults, or force the WSLg profile
   CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=0|1
                               Override the launcher's default --disable-gpu-compositing decision
+  CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1
+                              Override --force-renderer-accessibility; auto skips it under WSLg
 
 Logs: ${XDG_CACHE_HOME:-$HOME/.cache}/$CODEX_LINUX_APP_ID/launcher.log
 HELP
@@ -1482,6 +1484,25 @@ should_disable_gpu_compositing() {
     [ "$ELECTRON_RENDERING_MODE" != "wslg" ]
 }
 
+should_force_renderer_accessibility() {
+    if [ -n "${CODEX_FORCE_RENDERER_ACCESSIBILITY:-}" ]; then
+        if truthy_env_value "$CODEX_FORCE_RENDERER_ACCESSIBILITY"; then
+            return 0
+        fi
+        if falsey_env_value "$CODEX_FORCE_RENDERER_ACCESSIBILITY"; then
+            return 1
+        fi
+        case "$CODEX_FORCE_RENDERER_ACCESSIBILITY" in
+            auto|AUTO|Auto) ;;
+            *)
+                echo "Invalid CODEX_FORCE_RENDERER_ACCESSIBILITY='${CODEX_FORCE_RENDERER_ACCESSIBILITY:-}'; using rendering profile default" >&2
+                ;;
+        esac
+    fi
+
+    [ "$ELECTRON_RENDERING_MODE" != "wslg" ]
+}
+
 set_electron_defaults() {
     ELECTRON_OZONE_PLATFORM=""
     ELECTRON_OZONE_HINT="auto"
@@ -1495,6 +1516,7 @@ set_electron_defaults() {
     ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS=0
     ELECTRON_GPU_COMPOSITING_DISABLED=0
     ELECTRON_GPU_COMPOSITING_SWITCH_PROVIDED=0
+    ELECTRON_RENDERER_ACCESSIBILITY_FORCED=0
     ELECTRON_ARGS=()
     local passthrough=0
 
@@ -1606,8 +1628,11 @@ build_electron_launch_args() {
         ELECTRON_LAUNCH_ARGS+=(--disable-gpu --disable-features=Vulkan)
     fi
 
-    if [ "${CODEX_FORCE_RENDERER_ACCESSIBILITY:-1}" = "1" ]; then
+    if should_force_renderer_accessibility; then
         ELECTRON_LAUNCH_ARGS+=(--force-renderer-accessibility)
+        ELECTRON_RENDERER_ACCESSIBILITY_FORCED=1
+    else
+        ELECTRON_RENDERER_ACCESSIBILITY_FORCED=0
     fi
 
     if [ "$ELECTRON_OZONE_PLATFORM" = "wayland" ]; then
@@ -1648,12 +1673,12 @@ launch_electron() {
     build_electron_launch_args
 
     if [ "$WARM_START" -eq 1 ]; then
-        echo "Electron warm-start handoff: pid=$RUNNING_APP_PID rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED"
+        echo "Electron warm-start handoff: pid=$RUNNING_APP_PID rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
         "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}"
         return $?
     fi
 
-    echo "Electron launch mode: rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED"
+    echo "Electron launch mode: rendering_mode=$ELECTRON_RENDERING_MODE wslg_detected=$ELECTRON_WSLG_DETECTED ozone_platform=${ELECTRON_OZONE_PLATFORM:-default} ozone_hint=${ELECTRON_OZONE_HINT:-none} gpu_enabled=$ELECTRON_GPU_ENABLED gpu_disable_arg=$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS gpu_compositing_disabled=$ELECTRON_GPU_COMPOSITING_DISABLED gl_switch_added=$ELECTRON_GL_SWITCH_ADDED renderer_accessibility_forced=$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
     "$SCRIPT_DIR/electron" "${ELECTRON_LAUNCH_ARGS[@]}" "${ELECTRON_ARGS[@]}" &
     ELECTRON_PID=$!
     if [ -n "${RUNNING_APP_PID:-}" ] && pid_matches_executable "$RUNNING_APP_PID" "$SCRIPT_DIR/electron"; then

@@ -560,7 +560,7 @@ CODEX_LINUX_APP_ID="${CODEX_LINUX_APP_ID:-codex-desktop}"
 APP_STATE_DIR="${APP_STATE_DIR:-/tmp/codex-launcher-probe-state}"
 
 print_state() {
-    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s launch=' \
+    printf 'mode=%s wslg=%s ozone_platform=%s ozone_hint=%s gpu=%s gpu_arg=%s comp=%s gl_added=%s renderer_accessibility=%s launch=' \
         "$ELECTRON_RENDERING_MODE" \
         "$ELECTRON_WSLG_DETECTED" \
         "${ELECTRON_OZONE_PLATFORM:-}" \
@@ -568,7 +568,8 @@ print_state() {
         "$ELECTRON_GPU_ENABLED" \
         "$ELECTRON_GPU_DISABLE_SWITCH_IN_ARGS" \
         "$ELECTRON_GPU_COMPOSITING_DISABLED" \
-        "$ELECTRON_GL_SWITCH_ADDED"
+        "$ELECTRON_GL_SWITCH_ADDED" \
+        "$ELECTRON_RENDERER_ACCESSIBILITY_FORCED"
     for arg in "${ELECTRON_LAUNCH_ARGS[@]}"; do
         printf '<%s>' "$arg"
     done
@@ -600,6 +601,7 @@ PY
     [[ "$output" == *"electron=<--use-gl=angle>"* ]] || fail "launcher must pass Electron args after -- without the separator: $output"
     [[ "$output" != *"electron=<--><--use-gl=angle>"* ]] || fail "launcher must not pass the -- separator to Electron: $output"
     [[ "$output" == *"<--ozone-platform=x11>"* ]] || fail "launcher --x11 must still set the Electron ozone platform: $output"
+    [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "default Linux profile must still force renderer accessibility: $output"
 
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default "$launcher_probe" probe -- --ozone-platform=x11)"
     [[ "$output" == *"electron=<--ozone-platform=x11>"* ]] || fail "pass-through ozone platform must reach Electron: $output"
@@ -609,6 +611,13 @@ PY
     [[ "$output" == *"mode=wslg"* && "$output" == *"comp=0"* && "$output" == *"gl_added=1"* ]] || fail "forced WSLg profile must disable GPU compositing default and add ANGLE: $output"
     [[ "$output" == *"<--ozone-platform=x11>"* && "$output" == *"electron=<--use-gl=angle>"* ]] || fail "forced WSLg profile must use X11 and ANGLE by default: $output"
     [[ "$output" != *"<--disable-gpu-compositing>"* ]] || fail "forced WSLg profile must not add disable-gpu-compositing by default: $output"
+    [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "forced WSLg profile must skip renderer accessibility by default: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg CODEX_FORCE_RENDERER_ACCESSIBILITY=1 "$launcher_probe" probe)"
+    [[ "$output" == *"renderer_accessibility=1"* && "$output" == *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=1 must force renderer accessibility under WSLg: $output"
+
+    output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=default CODEX_FORCE_RENDERER_ACCESSIBILITY=0 "$launcher_probe" probe)"
+    [[ "$output" == *"renderer_accessibility=0"* && "$output" != *"<--force-renderer-accessibility>"* ]] || fail "CODEX_FORCE_RENDERER_ACCESSIBILITY=0 must disable renderer accessibility under default Linux: $output"
 
     output="$(env -i PATH="$PATH" HOME="$HOME" CODEX_LINUX_RENDERING_MODE=wslg "$launcher_probe" probe --wayland --use-gl=desktop)"
     [[ "$output" == *"<--ozone-platform=wayland>"* && "$output" == *"electron=<--use-gl=desktop>"* ]] || fail "explicit rendering args must override WSLg defaults: $output"
@@ -645,6 +654,7 @@ PY
     assert_contains "$REPO_DIR/launcher/start.sh.template" '--ozone-platform-hint="$ELECTRON_OZONE_HINT"'
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--disable-gpu-sandbox"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--force-renderer-accessibility"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "CODEX_FORCE_RENDERER_ACCESSIBILITY=auto|0|1"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "PACKAGED_RUNTIME_HELPER"
     assert_contains "$REPO_DIR/launcher/start.sh.template" "--allow-install-missing"
     assert_contains "$REPO_DIR/scripts/lib/process-detection.sh" "CODEX_INSTALL_ALLOW_RUNNING"
