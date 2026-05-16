@@ -22,7 +22,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-WTeptN8D9hF2ffvlJKppfLTOJr5Z0hjokHCnGX6drk0=";
+          hash = "sha256-bUQMcTN3GTXIYKVUa81gP4ubZbN+m4K9sAGdT9DIW2o=";
         };
 
         electronLibs = with pkgs; [
@@ -259,12 +259,12 @@ PY
         };
 
         codexDesktopPayload = mkCodexDesktopPayload {
-          outputHash = "sha256-oikRvP+7uKLnue/Kt2QYi62+SGshTa+pa/bGgDF0/MU=";
+          outputHash = "sha256-St1i5jXroxw7uqK5BhdNzQM0XaO8kzNnpftIP6Aghf0=";
         };
 
         codexDesktopComputerUseUiPayload = mkCodexDesktopPayload {
           enableComputerUseUi = true;
-          outputHash = "sha256-5Th9zylhkqOpB5PuFjmeTKSVDVSlDys3Mdk9FMBlHAM=";
+          outputHash = "sha256-LUGNTCwnBESJm0LRkRkb6cVqLPnV2EvlNfJL3ULnBXM=";
         };
 
         mkCodexDesktop = { pname ? "codex-desktop", payload }:
