@@ -1,50 +1,51 @@
 //! Wrapper-repo update detection.
 //!
-//! Beyond tracking the upstream Codex DMG, the updater can detect when the
+//! Beyond tracking the upstream Codex DMG, the updater detects when the
 //! *wrapper* itself (this repository — new Linux features, patches, fixes) has
-//! advanced. Detection is git-based and strictly read-only: it inspects the
-//! builder bundle checkout and queries the remote head with `git ls-remote`,
-//! and never mutates the user's working tree. The actual rebuild reuses the
-//! existing DMG rebuild path against the refreshed checkout.
+//! advanced upstream. Detection is git-only and works for ALL install types
+//! (packaged .deb/.rpm/pacman and user-local install.sh) — it does not require a
+//! local git checkout:
 //!
-//! When the builder bundle is a frozen packaged copy (no `.git`), the wrapper
-//! axis degrades gracefully: detection reports "not a git checkout" and the
-//! caller leaves wrapper updates to a normal package upgrade.
+//! - The installed wrapper build time is read from the installed package version
+//!   (`YYYY.MM.DD.HHMMSS+<dmg-sha>`), available on every install. The `+suffix`
+//!   is the upstream DMG sha, NOT a wrapper commit, so it is never used as one.
+//! - The upstream HEAD commit date and `CHANGELOG.md` are obtained with a git
+//!   shallow fetch (`git fetch --depth 1`) into a cache dir under the updater
+//!   workspace. This never touches the user's working tree and needs only git
+//!   (no GitHub API, no curl).
+//!
+//! A newer wrapper build is available when the upstream HEAD commit date is
+//! later than the installed build timestamp.
 
 use anyhow::Result;
-use std::{path::Path, process::Command};
+use chrono::{DateTime, NaiveDateTime, Utc};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::changelog;
 
-/// Identity of a wrapper checkout: its current commit and best-effort version.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WrapperVersion {
-    /// Full commit SHA of the checkout's `HEAD`.
-    pub commit: String,
-    /// Semver read from `updater/Cargo.toml`, when available.
-    pub version: Option<String>,
-}
+/// Default upstream wrapper repository, used when no remote can be resolved from
+/// config or a local checkout. This is the project's canonical "all users" repo.
+const DEFAULT_WRAPPER_REMOTE: &str = "https://github.com/ilysenko/codex-desktop-linux.git";
 
-/// Result of comparing the local checkout against the remote head.
+/// Result of comparing the installed wrapper build against the upstream head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WrapperUpdate {
-    pub installed_commit: String,
-    pub installed_version: Option<String>,
+    /// Installed build timestamp, formatted `YYYY.MM.DD.HHMMSS` (when known).
+    pub installed_build: Option<String>,
+    /// Upstream HEAD commit sha.
     pub candidate_commit: String,
-    pub candidate_version: Option<String>,
-    /// Curated CHANGELOG sections newer than installed, or a git commit-subject
-    /// list when the changelog can't be mapped.
+    /// Upstream HEAD commit date (RFC3339).
+    pub candidate_date: String,
+    /// Curated CHANGELOG sections, or a short fallback line.
     pub changelog: String,
 }
 
-/// Runs a read-only git command in `repo`, returning trimmed stdout on success.
-fn git_capture(repo: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(args)
-        .output()
-        .ok()?;
+/// Runs a git command, returning trimmed stdout on success (read-only helper).
+fn git_capture(args: &[&str]) -> Option<String> {
+    let output = Command::new("git").args(args).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -57,187 +58,157 @@ fn git_capture(repo: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// True when `repo` is a git working tree.
-pub fn is_git_checkout(repo: &Path) -> bool {
-    git_capture(repo, &["rev-parse", "--is-inside-work-tree"])
-        .map(|value| value == "true")
-        .unwrap_or(false)
+fn is_git_checkout(repo: &Path) -> bool {
+    git_capture(&[
+        "-C",
+        &repo.to_string_lossy(),
+        "rev-parse",
+        "--is-inside-work-tree",
+    ])
+    .map(|value| value == "true")
+    .unwrap_or(false)
 }
 
-/// Reads the `version = "x.y.z"` value from `updater/Cargo.toml` in the
-/// checkout. Best-effort: returns `None` when the file or field is missing.
-fn read_wrapper_version(repo: &Path) -> Option<String> {
-    let cargo_toml = repo.join("updater").join("Cargo.toml");
-    let content = std::fs::read_to_string(cargo_toml).ok()?;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("version") {
-            let rest = rest.trim_start();
-            if let Some(rest) = rest.strip_prefix('=') {
-                let value = rest.trim().trim_matches('"');
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+/// Parses the `YYYY.MM.DD.HHMMSS` build timestamp from a package version such as
+/// `2026.05.19.214329+6d440c71`. Returns the parsed UTC time and the formatted
+/// prefix. Anything that does not match the expected shape yields `None`.
+pub fn parse_build_timestamp(package_version: &str) -> Option<(DateTime<Utc>, String)> {
+    let prefix = package_version.split('+').next()?.trim();
+    let parsed = NaiveDateTime::parse_from_str(prefix, "%Y.%m.%d.%H%M%S").ok()?;
+    Some((parsed.and_utc(), prefix.to_string()))
+}
+
+/// Resolves the wrapper remote URL: explicit config value, else the checkout's
+/// `origin` URL when a checkout exists, else the canonical upstream default.
+pub fn resolve_remote(config_remote: &str, bundle_root: &Path) -> String {
+    let trimmed = config_remote.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    if is_git_checkout(bundle_root) {
+        if let Some(origin) = git_capture(&[
+            "-C",
+            &bundle_root.to_string_lossy(),
+            "remote",
+            "get-url",
+            "origin",
+        ]) {
+            return origin;
+        }
+    }
+    DEFAULT_WRAPPER_REMOTE.to_string()
+}
+
+/// Shallow-fetches `branch` from `remote` into a dedicated cache repo under
+/// `cache_dir`, returning that repo path. The cache repo is created on first use
+/// and reused afterwards. Only the cache dir is written — never the user's tree.
+fn shallow_fetch(remote: &str, branch: &str, cache_dir: &Path) -> Option<PathBuf> {
+    let repo = cache_dir.join("wrapper-detect.git");
+    if !repo.join("HEAD").exists() {
+        std::fs::create_dir_all(&repo).ok()?;
+        let status = Command::new("git")
+            .args(["init", "--bare", "--quiet"])
+            .arg(&repo)
+            .status()
+            .ok()?;
+        if !status.success() {
+            return None;
+        }
+    }
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(&repo)
+        .args(["fetch", "--depth", "1", "--quiet", remote, branch])
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+    Some(repo)
+}
+
+/// Reads the upstream HEAD sha, commit date, and `CHANGELOG.md` from a shallow
+/// fetch cache repo. Returns `(sha, rfc3339_date, changelog_markdown)`.
+fn read_fetch_head(repo: &Path) -> Option<(String, String, Option<String>)> {
+    let repo_str = repo.to_string_lossy().to_string();
+    let sha = git_capture(&["-C", &repo_str, "rev-parse", "FETCH_HEAD"])?;
+    let date = git_capture(&["-C", &repo_str, "log", "-1", "--format=%cI", "FETCH_HEAD"])?;
+    let changelog = git_capture(&["-C", &repo_str, "show", "FETCH_HEAD:CHANGELOG.md"]);
+    Some((sha, date, changelog))
+}
+
+/// Builds the "what changed" text. Prefers curated CHANGELOG sections newer than
+/// the installed build (matched by date is not possible per-section, so we show
+/// the `[Unreleased]` + all released sections above any that predate the build
+/// is not reliable; instead we surface the full curated changelog head). Falls
+/// back to a short line when no changelog is available.
+fn build_changelog(changelog_md: Option<&str>) -> String {
+    if let Some(md) = changelog_md {
+        let sections = changelog::parse_changelog(md);
+        if !sections.is_empty() {
+            // Surface the top sections (Unreleased + newest releases). Cap to a
+            // few sections so the tooltip/notification stays readable.
+            let head: Vec<String> = sections
+                .iter()
+                .take(4)
+                .map(|s| format!("## {}\n\n{}", s.version, s.body))
+                .collect();
+            if !head.is_empty() {
+                return head.join("\n\n");
             }
         }
     }
-    None
+    "Wrapper update available (changelog unavailable).".to_string()
 }
 
-/// Resolves the installed wrapper identity from a checkout.
-pub fn installed_wrapper(repo: &Path) -> Option<WrapperVersion> {
-    let commit = git_capture(repo, &["rev-parse", "HEAD"])?;
-    Some(WrapperVersion {
-        commit,
-        version: read_wrapper_version(repo),
-    })
-}
-
-/// Resolves the wrapper repo origin URL from the checkout.
-fn origin_url(repo: &Path) -> Option<String> {
-    git_capture(repo, &["remote", "get-url", "origin"])
-}
-
-/// Queries the remote head commit for `branch` via `git ls-remote`.
-///
-/// `remote` may be a configured remote name (`origin`) or an explicit URL. When
-/// no remote is configured this falls back to the checkout's origin URL.
-pub fn fetch_remote_head(repo: &Path, remote: &str, branch: &str) -> Option<String> {
-    let resolved_remote = if remote.is_empty() {
-        origin_url(repo)?
-    } else {
-        remote.to_string()
-    };
-    let output = git_capture(repo, &["ls-remote", &resolved_remote, branch])?;
-    // ls-remote prints "<sha>\t<ref>"; take the first whitespace-delimited field.
-    output
-        .lines()
-        .next()
-        .and_then(|line| line.split_whitespace().next())
-        .map(str::to_string)
-}
-
-/// Fetches the candidate branch into the local object store WITHOUT touching
-/// the working tree or current branch. This makes the candidate commit and its
-/// `CHANGELOG.md` blob available to `git show` / `git log`. Read-only with
-/// respect to the user's checked-out files.
-fn fetch_objects(repo: &Path, remote: &str, branch: &str) {
-    let resolved_remote = if remote.is_empty() {
-        match origin_url(repo) {
-            Some(url) => url,
-            None => return,
-        }
-    } else {
-        remote.to_string()
-    };
-    // `git fetch <remote> <branch>` updates FETCH_HEAD and objects only.
-    let _ = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .args(["fetch", "--quiet", &resolved_remote, branch])
-        .output();
-}
-
-/// Reads `CHANGELOG.md` at a specific commit from the object store (the
-/// candidate's changelog, which reflects the new version's entries).
-fn changelog_at_commit(repo: &Path, commit: &str) -> Option<String> {
-    git_capture(repo, &["show", &format!("{commit}:CHANGELOG.md")])
-}
-
-/// Builds the "what changed" text for an update. Prefers curated CHANGELOG.md
-/// sections (from the candidate commit) newer than `installed_version`; falls
-/// back to `git log --oneline installed..candidate` commit subjects when the
-/// changelog can't be mapped.
-fn build_changelog(
-    repo: &Path,
-    installed_version: Option<&str>,
-    installed_commit: &str,
-    candidate_commit: &str,
-) -> String {
-    if let (Some(version), Some(markdown)) = (
-        installed_version,
-        changelog_at_commit(repo, candidate_commit),
-    ) {
-        let sections = changelog::parse_changelog(&markdown);
-        if let Some(text) = changelog::sections_newer_than(&sections, version) {
-            return text;
-        }
-    }
-
-    // Fallback: raw commit subjects between the two commits.
-    let range = format!("{installed_commit}..{candidate_commit}");
-    if let Some(log) = git_capture(repo, &["log", "--oneline", "--no-decorate", &range]) {
-        if !log.is_empty() {
-            return log;
-        }
-    }
-
-    "Wrapper updated (no changelog details available).".to_string()
-}
-
-/// Detects whether the wrapper repo at `repo` has a newer head than the local
-/// checkout. Returns `Ok(None)` when up to date, when `repo` is not a git
-/// checkout (packaged frozen bundle), or when the remote can't be reached.
-/// Never mutates the working tree.
+/// Detects whether the upstream wrapper repo has a newer build than the one
+/// installed. `installed_version` is the package version string
+/// (`install::installed_package_version()`); `bundle_root` is used only to
+/// resolve a remote URL when one is not configured. `cache_dir` holds the
+/// shallow-fetch repo. Returns `Ok(None)` when up to date, offline, or when the
+/// installed build timestamp can't be parsed. Never mutates the working tree.
 pub fn detect_wrapper_update(
-    repo: &Path,
-    remote: &str,
+    installed_version: &str,
+    config_remote: &str,
     branch: &str,
+    bundle_root: &Path,
+    cache_dir: &Path,
 ) -> Result<Option<WrapperUpdate>> {
-    if !is_git_checkout(repo) {
-        return Ok(None);
-    }
-
-    let Some(installed) = installed_wrapper(repo) else {
-        return Ok(None);
-    };
-    let Some(candidate_commit) = fetch_remote_head(repo, remote, branch) else {
+    let Some((installed_time, installed_build)) = parse_build_timestamp(installed_version) else {
         return Ok(None);
     };
 
-    if candidate_commit == installed.commit {
+    let remote = resolve_remote(config_remote, bundle_root);
+    let Some(repo) = shallow_fetch(&remote, branch, cache_dir) else {
+        return Ok(None);
+    };
+    let Some((candidate_commit, candidate_date, changelog_md)) = read_fetch_head(&repo) else {
+        return Ok(None);
+    };
+
+    let Ok(candidate_time) = DateTime::parse_from_rfc3339(&candidate_date) else {
+        return Ok(None);
+    };
+
+    if candidate_time.with_timezone(&Utc) <= installed_time {
         return Ok(None);
     }
-
-    // Bring the candidate commit + its CHANGELOG blob into the local object
-    // store so the changelog can be read. Does not touch the working tree.
-    fetch_objects(repo, remote, branch);
-
-    let changelog = build_changelog(
-        repo,
-        installed.version.as_deref(),
-        &installed.commit,
-        &candidate_commit,
-    );
 
     Ok(Some(WrapperUpdate {
-        installed_commit: installed.commit,
-        installed_version: installed.version,
+        installed_build: Some(installed_build),
         candidate_commit,
-        candidate_version: None,
-        changelog,
+        candidate_date,
+        changelog: build_changelog(changelog_md.as_deref()),
     }))
-}
-
-/// Convenience for callers that hold a `builder_bundle_root` path.
-pub fn detect_from_bundle_root(
-    bundle_root: &Path,
-    remote: &str,
-    branch: &str,
-) -> Result<Option<WrapperUpdate>> {
-    detect_wrapper_update(bundle_root, remote, branch)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::env_lock;
     use std::process::Command;
     use tempfile::tempdir;
 
-    use crate::test_util::env_lock;
-    use std::path::PathBuf;
-
-    // Resolve git to an absolute path so these tests don't depend on $PATH,
-    // which other tests in the binary mutate concurrently.
     fn git_bin() -> PathBuf {
         if let Some(explicit) = std::env::var_os("GIT") {
             return PathBuf::from(explicit);
@@ -270,98 +241,121 @@ mod tests {
         );
     }
 
-    fn git_clone(origin: &Path, dest: &Path) {
-        let status = Command::new(git_bin())
-            .args(["clone", "-q"])
-            .arg(origin)
-            .arg(dest)
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_SYSTEM", "/dev/null")
-            .output()
-            .expect("git clone");
-        assert!(status.status.success(), "git clone failed");
-    }
-
-    fn init_repo(dir: &Path) {
+    /// Creates a local "upstream" repo with one commit at a fixed date so the
+    /// shallow fetch + date comparison is deterministic.
+    fn init_origin(dir: &Path, commit_date: &str) {
         git(dir, &["init", "-q", "-b", "main"]);
-        std::fs::create_dir_all(dir.join("updater")).unwrap();
         std::fs::write(
-            dir.join("updater/Cargo.toml"),
-            "[package]\nname = \"codex-update-manager\"\nversion = \"0.8.1\"\n",
-        )
-        .unwrap();
-        std::fs::write(dir.join("CHANGELOG.md"), "# Changelog\n").unwrap();
-        git(dir, &["add", "-A"]);
-        git(dir, &["commit", "-q", "-m", "init"]);
-    }
-
-    #[test]
-    fn non_git_dir_reports_no_update() {
-        let temp = tempdir().unwrap();
-        assert!(!is_git_checkout(temp.path()));
-        assert_eq!(
-            detect_wrapper_update(temp.path(), "origin", "main").unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn reads_installed_commit_and_version() {
-        let _g = env_lock();
-        let temp = tempdir().unwrap();
-        init_repo(temp.path());
-        let installed = installed_wrapper(temp.path()).expect("installed");
-        assert_eq!(installed.version.as_deref(), Some("0.8.1"));
-        assert_eq!(installed.commit.len(), 40);
-    }
-
-    #[test]
-    fn detects_newer_head_against_local_remote() {
-        let _g = env_lock();
-        // origin repo
-        let origin = tempdir().unwrap();
-        init_repo(origin.path());
-
-        // clone it
-        let clone = tempdir().unwrap();
-        let clone_path = clone.path().join("checkout");
-        git_clone(origin.path(), &clone_path);
-
-        // advance origin with a changelog bump
-        std::fs::write(
-            origin.path().join("CHANGELOG.md"),
+            dir.join("CHANGELOG.md"),
             "# Changelog\n\n## [0.9.0] - 2026-06-01\n\n### Added\n\n- New wrapper feature.\n",
         )
         .unwrap();
-        git(origin.path(), &["add", "-A"]);
-        git(origin.path(), &["commit", "-q", "-m", "bump"]);
-
-        // clone still on old head; detect should find the new origin head
-        let update = detect_wrapper_update(&clone_path, "origin", "main")
-            .unwrap()
-            .expect("update detected");
-        assert_ne!(update.installed_commit, update.candidate_commit);
-        assert_eq!(update.installed_version.as_deref(), Some("0.8.1"));
-        // The candidate commit's CHANGELOG has a [0.9.0] section, newer than the
-        // installed 0.8.1, so the curated changelog is surfaced.
-        assert!(
-            update.changelog.contains("New wrapper feature."),
-            "changelog was: {}",
-            update.changelog
-        );
+        git(dir, &["add", "-A"]);
+        // Pin both author and committer dates so %cI is stable.
+        let output = Command::new(git_bin())
+            .arg("-C")
+            .arg(dir)
+            .args(["commit", "-q", "-m", "release"])
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@example.com")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@example.com")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_AUTHOR_DATE", commit_date)
+            .env("GIT_COMMITTER_DATE", commit_date)
+            .output()
+            .expect("spawn git commit");
+        assert!(output.status.success(), "git commit failed");
     }
 
     #[test]
-    fn up_to_date_clone_reports_no_update() {
+    fn parse_build_timestamp_extracts_prefix() {
+        let (time, prefix) = parse_build_timestamp("2026.05.19.214329+6d440c71").expect("parsed");
+        assert_eq!(prefix, "2026.05.19.214329");
+        assert_eq!(
+            time.format("%Y-%m-%d %H:%M:%S").to_string(),
+            "2026-05-19 21:43:29"
+        );
+        // No suffix is fine too.
+        assert!(parse_build_timestamp("2026.05.19.214329").is_some());
+        // Garbage yields None.
+        assert!(parse_build_timestamp("not-a-version").is_none());
+        assert!(parse_build_timestamp("1.2.3").is_none());
+    }
+
+    #[test]
+    fn detects_newer_upstream_build() {
         let _g = env_lock();
         let origin = tempdir().unwrap();
-        init_repo(origin.path());
-        let clone = tempdir().unwrap();
-        let clone_path = clone.path().join("checkout");
-        git_clone(origin.path(), &clone_path);
-        assert_eq!(
-            detect_wrapper_update(&clone_path, "origin", "main").unwrap(),
-            None
-        );
+        let cache = tempdir().unwrap();
+        // Upstream commit dated well after the installed build.
+        init_origin(origin.path(), "2026-06-01T12:00:00 +0000");
+
+        let remote = origin.path().to_string_lossy().to_string();
+        let update = detect_wrapper_update(
+            "2026.05.19.214329+6d440c71",
+            &remote,
+            "main",
+            origin.path(),
+            cache.path(),
+        )
+        .unwrap()
+        .expect("update detected");
+
+        assert_eq!(update.candidate_commit.len(), 40);
+        assert!(update.changelog.contains("New wrapper feature."));
+        assert_eq!(update.installed_build.as_deref(), Some("2026.05.19.214329"));
+    }
+
+    #[test]
+    fn no_update_when_installed_is_newer() {
+        let _g = env_lock();
+        let origin = tempdir().unwrap();
+        let cache = tempdir().unwrap();
+        // Upstream commit dated BEFORE the installed build.
+        init_origin(origin.path(), "2026-01-01T00:00:00 +0000");
+
+        let remote = origin.path().to_string_lossy().to_string();
+        let result = detect_wrapper_update(
+            "2026.05.19.214329+6d440c71",
+            &remote,
+            "main",
+            origin.path(),
+            cache.path(),
+        )
+        .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn unparseable_installed_version_yields_none() {
+        let _g = env_lock();
+        let cache = tempdir().unwrap();
+        let result = detect_wrapper_update(
+            "not-a-version",
+            DEFAULT_WRAPPER_REMOTE,
+            "main",
+            Path::new("/nonexistent"),
+            cache.path(),
+        )
+        .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn offline_or_bad_remote_yields_none() {
+        let _g = env_lock();
+        let cache = tempdir().unwrap();
+        // A remote that cannot be fetched -> graceful None, no panic.
+        let result = detect_wrapper_update(
+            "2026.05.19.214329+6d440c71",
+            "/nonexistent/repo.git",
+            "main",
+            Path::new("/nonexistent"),
+            cache.path(),
+        )
+        .unwrap();
+        assert_eq!(result, None);
     }
 }

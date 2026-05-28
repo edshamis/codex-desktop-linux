@@ -96,22 +96,21 @@ pub struct PersistedState {
     pub cli_error_message: Option<String>,
     #[serde(default)]
     pub cli_prompt_dismissed_at: Option<DateTime<Utc>>,
-    /// Wrapper (repo) version currently installed, when known.
+    /// Installed wrapper build timestamp (`YYYY.MM.DD.HHMMSS`), when known.
     #[serde(default)]
-    pub installed_wrapper_version: Option<String>,
-    /// Wrapper commit currently installed, when known.
-    #[serde(default)]
-    pub installed_wrapper_commit: Option<String>,
-    /// Newer wrapper version detected upstream, when one is available.
-    #[serde(default)]
-    pub candidate_wrapper_version: Option<String>,
-    /// Newer wrapper commit detected upstream, when one is available.
+    pub installed_wrapper_build: Option<String>,
+    /// Upstream wrapper HEAD commit detected newer than the installed build.
     #[serde(default)]
     pub candidate_wrapper_commit: Option<String>,
-    /// Changelog (curated sections or git subjects) for the detected wrapper
-    /// update.
+    /// Upstream wrapper HEAD commit date (RFC3339) for the detected update.
+    #[serde(default)]
+    pub candidate_wrapper_date: Option<String>,
+    /// Changelog (curated sections) for the detected wrapper update.
     #[serde(default)]
     pub wrapper_changelog: Option<String>,
+    /// Progress of an in-flight wrapper apply: `applying` | `installed` | `failed`.
+    #[serde(default)]
+    pub wrapper_status: Option<String>,
 }
 
 impl PersistedState {
@@ -139,11 +138,11 @@ impl PersistedState {
             cli_last_verified_at: None,
             cli_error_message: None,
             cli_prompt_dismissed_at: None,
-            installed_wrapper_version: None,
-            installed_wrapper_commit: None,
-            candidate_wrapper_version: None,
+            installed_wrapper_build: None,
             candidate_wrapper_commit: None,
+            candidate_wrapper_date: None,
             wrapper_changelog: None,
+            wrapper_status: None,
         }
     }
 

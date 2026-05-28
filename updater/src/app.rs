@@ -7,7 +7,7 @@ use crate::{
     config::{RuntimeConfig, RuntimePaths},
     install, install_rollback, liveness, logging, notify, rollback,
     state::{CliStatus, PersistedState, UpdateStatus},
-    upstream, wrapper,
+    upstream, wrapper, wrapper_apply,
 };
 use anyhow::{Context, Result};
 use chrono::{Duration as ChronoDuration, Utc};
@@ -43,6 +43,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     if let Some(auto_install) = crate::config::settings_auto_install_override() {
         config.auto_install_on_app_exit = auto_install;
     }
+    // The "Check for Codex Desktop Linux updates" toggle persists to settings.json
+    // and enables the wrapper-update axis; absent ⇒ keep the config/default value.
+    if let Some(enabled) = crate::config::settings_wrapper_updates_override() {
+        config.enable_wrapper_updates = enabled;
+    }
     let mut state =
         PersistedState::load_or_default(&paths.state_file, config.auto_install_on_app_exit)?;
     let original_state = state.clone();
@@ -55,6 +60,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             run_check_now(&config, &mut state, &paths, if_stale).await
         }
         Commands::CheckWrapper { json } => run_check_wrapper(&config, &mut state, &paths, json),
+        Commands::ApplyWrapperUpdate => {
+            wrapper_apply::run_apply_wrapper_update(&config, &mut state, &paths).await
+        }
         Commands::CliPreflight {
             cli_path,
             print_path,
@@ -300,10 +308,11 @@ async fn run_check_now(
     reconcile_pending_install(config, state, paths).await
 }
 
-/// Detects a newer wrapper release and records it into state. Returns
+/// Detects a newer upstream wrapper build and records it into state. Returns
 /// `Ok(true)` when an update was found and recorded. No-ops (returning
-/// `Ok(false)`) when wrapper tracking is disabled, the builder bundle is not a
-/// git checkout, or no newer commit is available. Never mutates the checkout.
+/// `Ok(false)`) when wrapper tracking is disabled, offline, or already current.
+/// Detection is git-only and works for all install types; never mutates the
+/// user's working tree.
 fn detect_and_record_wrapper_update(
     config: &RuntimeConfig,
     state: &mut PersistedState,
@@ -313,10 +322,13 @@ fn detect_and_record_wrapper_update(
         return Ok(false);
     }
 
-    let update = match wrapper::detect_from_bundle_root(
-        &config.builder_bundle_root,
+    let installed_version = install::installed_package_version();
+    let update = match wrapper::detect_wrapper_update(
+        &installed_version,
         &config.wrapper_remote,
         &config.wrapper_branch,
+        &config.builder_bundle_root,
+        &paths.cache_dir,
     ) {
         Ok(Some(update)) => update,
         Ok(None) => return Ok(false),
@@ -327,27 +339,19 @@ fn detect_and_record_wrapper_update(
     };
 
     let original_state = state.clone();
-    state.installed_wrapper_version = update.installed_version.clone();
-    state.installed_wrapper_commit = Some(update.installed_commit.clone());
-    state.candidate_wrapper_version = update.candidate_version.clone();
+    state.installed_wrapper_build = update.installed_build.clone();
     state.candidate_wrapper_commit = Some(update.candidate_commit.clone());
+    state.candidate_wrapper_date = Some(update.candidate_date.clone());
     state.wrapper_changelog = Some(update.changelog.clone());
     persist_if_changed(paths, state, &original_state)?;
 
-    let change_count = update
-        .changelog
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .count();
     maybe_notify(
         state,
         paths,
         config.notifications,
         &format!("wrapper_update:{}", update.candidate_commit),
         "Codex Desktop wrapper update available",
-        &format!(
-            "A newer Linux wrapper build is available ({change_count} change(s)). Rebuild to apply."
-        ),
+        "A newer Linux wrapper build is available. Open Codex and click Update to apply.",
     )?;
 
     Ok(true)
@@ -364,7 +368,7 @@ fn run_check_wrapper(
             println!("{}", serde_json::json!({ "enabled": false }));
         } else {
             println!(
-                "Wrapper update tracking is disabled (set enable_wrapper_updates = true in config.toml)."
+                "Wrapper update tracking is disabled (enable it from Codex settings or set enable_wrapper_updates = true in config.toml)."
             );
         }
         return Ok(());
@@ -376,21 +380,23 @@ fn run_check_wrapper(
         println!("{}", serde_json::to_string_pretty(state)?);
     } else if found {
         println!(
-            "wrapper update available: {} -> {}",
+            "wrapper update available: build {} -> upstream {} ({})",
             state
-                .installed_wrapper_commit
+                .installed_wrapper_build
                 .as_deref()
                 .unwrap_or("unknown"),
             state
                 .candidate_wrapper_commit
                 .as_deref()
-                .unwrap_or("unknown")
+                .map(|c| &c[..c.len().min(8)])
+                .unwrap_or("unknown"),
+            state.candidate_wrapper_date.as_deref().unwrap_or("?")
         );
         if let Some(changelog) = state.wrapper_changelog.as_deref() {
             println!("\n{changelog}");
         }
     } else {
-        println!("wrapper is up to date (or not a git checkout).");
+        println!("wrapper is up to date.");
     }
 
     Ok(())

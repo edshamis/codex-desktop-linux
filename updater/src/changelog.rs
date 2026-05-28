@@ -64,7 +64,9 @@ fn parse_section_header(line: &str) -> Option<String> {
 ///
 /// Returns `None` when nothing newer is found (so the caller can fall back to a
 /// git commit list), or when `installed_version` cannot be parsed as semver
-/// (the version-to-header mapping is then unreliable).
+/// (the version-to-header mapping is then unreliable). Retained as a public
+/// helper for callers that have a parseable installed wrapper version.
+#[allow(dead_code)]
 pub fn sections_newer_than(
     sections: &[ChangelogSection],
     installed_version: &str,
