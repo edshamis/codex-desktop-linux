@@ -1713,10 +1713,29 @@ test("adds Linux build information to the tray menu", () => {
   assert.match(patched, /label:`Build Information`,click:\(\)=>\{codexLinuxShowBuildInfo\(\)\}/);
   assert.match(patched, /Enabled features:/);
   assert.match(patched, /Upstream DMG SHA256:/);
-  assert.match(patched, /Linux source revision:/);
+  assert.match(patched, /Linux source commit:/);
   assert.match(patched, /Source commit URL:/);
-  assert.match(patched, /Open Commit/);
+  assert.match(patched, /Open Source Commit/);
+  assert.match(patched, /Open Metadata File/);
   assert.match(patched, /shell\?\.openExternal/);
+  assert.match(patched, /shell\?\.openPath/);
+});
+
+test("adds Linux build information request handlers for renderer settings", () => {
+  const source =
+    "let n=require(`electron`),o=require(`node:fs`),i=require(`node:path`),e={bn:{help:`help`}};const h={\"get-global-state\":async({key:a})=>({value:this.globalState.get(a)}),\"set-global-state\":async({key:a,value:b,origin:c})=>(this.setGlobalStateValue(a,b,c),{success:!0})};let $e=[{role:`help`,id:e.bn.help,submenu:[{label:`Codex Documentation`,click:()=>{n.shell.openExternal(`https://developers.openai.com/codex/app`)}}]}],et=n.Menu.buildFromTemplate($e);n.Menu.setApplicationMenu(et);";
+  const patched = applyPatchTwice(applyLinuxBuildInfoTrayPatch, source);
+
+  assert.match(patched, /function codexLinuxGetBuildInfo\(\)/);
+  assert.match(patched, /"codex-linux-get-build-info":async\(\)=>codexLinuxGetBuildInfo\(\)/);
+  assert.match(
+    patched,
+    /"codex-linux-open-build-info-commit":async\(\)=>codexLinuxOpenBuildInfoCommit\(\)/,
+  );
+  assert.match(
+    patched,
+    /"codex-linux-show-build-info":async\(\)=>\{await codexLinuxShowBuildInfo\(\);return\{success:!0\}\}/,
+  );
 });
 
 test("adds Linux build information to current tray menu shape", () => {
@@ -2268,6 +2287,11 @@ test("keeps Linux desktop toggles visible with native Keyboard Shortcuts", () =>
     assert.match(linuxDesktopSource, /System tray/);
     assert.match(linuxDesktopSource, /Warm start/);
     assert.match(linuxDesktopSource, /Install updates when you close Codex/);
+    assert.match(linuxDesktopSource, /Build information/);
+    assert.match(linuxDesktopSource, /Linux source commit/);
+    assert.match(linuxDesktopSource, /Copy commit/);
+    assert.match(linuxDesktopSource, /Open commit/);
+    assert.match(linuxDesktopSource, /codex-linux-get-build-info/);
     assert.match(linuxDesktopSource, /codex-linux-system-tray-enabled/);
     assert.match(linuxDesktopSource, /codex-linux-auto-update-on-exit/);
     assert.match(linuxDesktopSource, /import\{z as __post\}from"\.\/setting-storage-A\.js"/);
