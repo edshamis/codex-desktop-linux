@@ -118,6 +118,8 @@ const opaqueBackgroundBundleWithDriftingGw =
   "var cM=`#00000000`,lM=`#000000`,uM=`#f9f9f9`;function OM(e){return e===`avatarOverlay`||e===`browserCommentPopup`}function jM({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return e===`win32`&&!OM(t)?n?{backgroundColor:r?lM:uM,backgroundMaterial:`none`}:{backgroundColor:cM,backgroundMaterial:`mica`}:{backgroundColor:cM,backgroundMaterial:null}}function gw(e){return e.page==null?e.snapshot.url:mw(e.page)}";
 const currentOpaqueBackgroundBundle =
   "var QK=`#00000000`,$K=`#000000`,eq=`#f9f9f9`;function vq(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`}function xq({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!vq(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?$K:eq,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!vq(t)?{backgroundColor:QK,backgroundMaterial:`mica`}:{backgroundColor:QK,backgroundMaterial:null}}";
+const currentOpaqueWindowSurfaceBackgroundBundle =
+  "var W4=`#00000000`,G4=`#000000`,K4=`#f9f9f9`;function g3(e){return e===`avatarOverlay`||e===`browserCommentPopup`||e===`globalDictation`||e===`hotkeyWindowHome`||e===`hotkeyWindowThread`||e===`hud`}function S3({platform:e,appearance:t,opaqueWindowSurfaceEnabled:n,prefersDarkColors:r}){return n?{backgroundColor:r?G4:K4,backgroundMaterial:e===`win32`?`none`:null}:e===`win32`&&!g3(t)?{backgroundColor:W4,backgroundMaterial:`mica`}:{backgroundColor:W4,backgroundMaterial:null}}";
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -715,6 +717,19 @@ function chromeNativeHostRuntimeBundleFixture() {
     "function Ic(e){return Mc({resourcesPath:e,executableName:process.platform===`win32`?`codex.exe`:`codex`})}",
     "function Qp(e){let t=Ic(e.resourcesPath)??$p(e.devRuntimeRepoRoot,[`extension`,`bin`,process.platform===`win32`?`codex.exe`:`codex`]),n=Fc(e.resourcesPath)??$p(e.devRuntimeRepoRoot,[`electron`,`bin`,process.platform===`win32`?`node.exe`:`node`]),r=Pc(e.resourcesPath)??$p(e.devRuntimeRepoRoot,[`electron`,`bin`,process.platform===`win32`?`node_repl.exe`:`node_repl`]),i=[t==null?`codex`:null,n==null?`node`:null,r==null?`node_repl`:null].filter(e=>e!=null);if(i.length>0)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}: ${i.join(`, `)} (resourcesPath: ${e.resourcesPath}).`);if(t==null||n==null||r==null)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}.`);return{codexCliPath:t,nodePath:n,nodeReplPath:r}}",
     "function $p(e,t){if(e==null)return null;let n=(0,r.join)(e,...t);try{return(0,o.statSync)(n).isFile()?n:null}catch{return null}}",
+  ].join("");
+}
+
+function currentChromeNativeHostRuntimeBundleFixture() {
+  return [
+    "let r=require(`node:path`),o=require(`node:fs`);",
+    "function Mc({resourcesPath:e,executableName:t}){if(!e)return null;let n=(0,r.join)(e,t);try{return(0,o.statSync)(n).isFile()?n:null}catch{return null}}",
+    "function Oj(e){return Mc({resourcesPath:e,executableName:process.platform===`win32`?`node_repl.exe`:`node_repl`})}",
+    "function kj(e){return Mc({resourcesPath:e,executableName:process.platform===`win32`?`node.exe`:`node`})}",
+    "function Nj(e){return Mc({resourcesPath:e,executableName:process.platform===`win32`?`codex.exe`:`codex`})}",
+    "function QL(e){let t=Nj(e.resourcesPath)??$L(e.devRuntimeRepoRoot,[`extension`,`bin`,process.platform===`win32`?`codex.exe`:`codex`]),n=kj(e.resourcesPath),r=Oj(e.resourcesPath),i=[t==null?`codex`:null,n==null?`node`:null,r==null?`node_repl`:null].filter(e=>e!=null);if(i.length>0)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}: ${i.join(`, `)} (resourcesPath: ${e.resourcesPath}).`);if(t==null||n==null||r==null)throw Error(`Missing bundled Electron runtime required to sync Chrome native host resources for ${e.nativeHostName}.`);return{codexCliPath:t,nodePath:n,nodeModuleDirs:Aj(e.resourcesPath),nodeReplPath:r}}",
+    "function $L(e,t){if(e==null)return null;let n=(0,r.join)(e,...t);try{return(0,o.statSync)(n).isFile()?n:null}catch{return null}}",
+    "function Aj(e){return []}",
   ].join("");
 }
 
@@ -1370,6 +1385,16 @@ test("patches current BrowserWindow background helper shape for Linux opaque bac
   assert.match(patched, /vq\(e\).*hotkeyWindowThread/);
 });
 
+test("patches current opaque window surface background helper shape for Linux", () => {
+  const patched = applyPatchTwice(applyLinuxOpaqueBackgroundPatch, currentOpaqueWindowSurfaceBackgroundBundle);
+
+  assert.match(
+    patched,
+    /:e===`linux`&&!g3\(t\)\?\{backgroundColor:r\?G4:K4,backgroundMaterial:null\}:e===`win32`&&!g3\(t\)\?/,
+  );
+  assert.match(patched, /opaqueWindowSurfaceEnabled:n/);
+});
+
 test("patches current webview opaque window default bundle shapes", () => {
   const resolvedThemeSource =
     "function oe(e,t){let n=o[t];return{accent:p(e?.accent)??n.accent,contrast:se(e?.contrast,n.contrast),fonts:le(e?.fonts),ink:p(e?.ink)??n.ink,opaqueWindows:e?.opaqueWindows??n.opaqueWindows,semanticColors:ue(e?.semanticColors,n.semanticColors),surface:p(e?.surface)??n.surface}}";
@@ -1687,6 +1712,23 @@ test("adds Linux tray support including the platform guard", () => {
     /\(E\|\|process\.platform===`linux`&&\(typeof codexLinuxIsTrayEnabled!==`function`\|\|codexLinuxIsTrayEnabled\(\)\)\)&&oe\(\);/,
   );
   assert.doesNotMatch(patched, /process\.platform===`linux`&&codexLinuxIsTrayEnabled\(\)/);
+});
+
+test("uses collision-proof Linux tray icon variables when Electron alias is r", () => {
+  const iconPathExpression = "process.resourcesPath+`/../content/webview/assets/app-test.png`";
+  const source = [
+    "let r=require(`electron`),i=require(`node:path`);",
+    "async function Hw(e){return process.platform!==`win32`&&process.platform!==`darwin`?null:(zw=!0,Lw??Rw??(Rw=(async()=>{let t=await Ww(e.buildFlavor,e.repoRoot),i=new r.Tray(t.defaultIcon);return i})()))}",
+    "async function Ww(e,t){if(process.platform===`darwin`){return null}let n=process.platform===`win32`?`.ico`:`.png`,a=Nw(e,process.platform),o=[...r.app.isPackaged?[(0,i.join)(process.resourcesPath,`${a}${n}`)]:[],(0,i.join)(t,`electron`,`src`,`icons`,`${a}${n}`)];for(let e of o){let t=r.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await r.app.getFileIcon(process.execPath,{size:process.platform===`win32`?`small`:`normal`}),chronicleRunningIcon:null}}",
+  ].join("");
+
+  const patched = applyPatchTwice(applyLinuxTrayPatch, source, iconPathExpression);
+
+  assert.doesNotMatch(patched, /let r=r\.nativeImage/);
+  assert.match(
+    patched,
+    /let __codexLinuxUpstreamTrayIcon=r\.nativeImage\.createFromPath\(process\.resourcesPath\+`\/\.\.\/content\/webview\/assets\/app-test\.png`\)/,
+  );
 });
 
 test("adds Linux tray support even when About dialog already uses the bundled icon path", () => {
@@ -3096,6 +3138,53 @@ test("uses Linux managed runtime paths for Chrome native host sync", () => {
   });
 });
 
+test("uses Linux managed runtime paths for current Chrome native host sync shape", () => {
+  const patched = applyPatchTwice(
+    applyLinuxChromeNativeHostRuntimePatch,
+    currentChromeNativeHostRuntimeBundleFixture(),
+  );
+  const files = new Set([
+    "/opt/codex/resources/node-runtime/bin/node",
+    "/opt/codex/resources/node_repl",
+    "/home/josh/.local/bin/codex",
+  ]);
+
+  const result = vm.runInNewContext(
+    `${patched};QL({resourcesPath:"/opt/codex/resources",devRuntimeRepoRoot:null,nativeHostName:"com.openai.codexextension"});`,
+    {
+      require(moduleName) {
+        if (moduleName === "node:path") {
+          return path;
+        }
+        if (moduleName === "node:fs") {
+          return {
+            statSync(filePath) {
+              if (!files.has(filePath)) {
+                throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+              }
+              return { isFile: () => true };
+            },
+          };
+        }
+        return require(moduleName);
+      },
+      process: {
+        platform: "linux",
+        env: {
+          CODEX_CLI_PATH: "/home/josh/.local/bin/codex",
+        },
+      },
+    },
+  );
+
+  assert.deepEqual(JSON.parse(JSON.stringify(result)), {
+    codexCliPath: "/home/josh/.local/bin/codex",
+    nodeModuleDirs: [],
+    nodePath: "/opt/codex/resources/node-runtime/bin/node",
+    nodeReplPath: "/opt/codex/resources/node_repl",
+  });
+});
+
 test("reports drifted Chrome native host runtime resolver as required upstream failure", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-chrome-runtime-drift-"));
   try {
@@ -4228,6 +4317,60 @@ test("patch report summary separates required core, optional core, and optional 
   assert.deepEqual(summary.groups.optionalCore.statusCounts, { "skipped-optional": 1 });
   assert.deepEqual(summary.groups.optionalFeatures.statusCounts, { "applied-with-warnings": 1 });
   assert.equal(summary.groups.optionalFeatures.byFeature["remote-mobile-control"].count, 1);
+});
+
+test("main-process-ui aggregate ignores optional main-bundle drift warnings", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-patch-report-optional-main-drift-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    const coreRoot = path.join(tempRoot, "core-patches");
+    const requiredPatchDir = path.join(coreRoot, "all-linux", "main-process", "required-test");
+    const optionalPatchDir = path.join(coreRoot, "all-linux", "main-process", "optional-test");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(requiredPatchDir, { recursive: true });
+    fs.mkdirSync(optionalPatchDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "codexRequiredPatchOff()");
+    fs.writeFileSync(
+      path.join(requiredPatchDir, "patch.js"),
+      [
+        "\"use strict\";",
+        "module.exports=[{",
+        "id:\"required-main-bundle-test\",",
+        "phase:\"main-bundle\",",
+        "ciPolicy:\"required-upstream\",",
+        "apply:(source)=>source.replace(\"codexRequiredPatchOff()\",\"codexRequiredPatchOn()\")",
+        "}];",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(optionalPatchDir, "patch.js"),
+      [
+        "\"use strict\";",
+        "module.exports=[{",
+        "id:\"optional-background-avatar-drift-test\",",
+        "phase:\"main-bundle\",",
+        "ciPolicy:\"optional\",",
+        "apply:(source)=>{console.warn(\"WARN: optional background/avatar drift\"); return source;}",
+        "}];",
+      ].join("\n"),
+    );
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempRoot, { report, corePatchRoot: coreRoot }));
+
+    const optionalPatch = report.patches.find((patch) => patch.name === "optional-background-avatar-drift-test");
+    const aggregate = report.patches.find((patch) => patch.name === "main-process-ui");
+    assert.equal(optionalPatch.status, "skipped-optional");
+    assert.equal(aggregate.status, "applied");
+    assert.equal(aggregate.warnings, undefined);
+    assert.ok(
+      !validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("main-process-ui:"),
+      ),
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
 });
 
 test("patch report marks missing required webview assets as required failures", () => {

@@ -328,6 +328,28 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
     return currentSource;
   }
 
+  const currentSurfaceFuncParamRegex =
+    /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowSurfaceEnabled:([A-Za-z_$][\w$]*),prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\3\?\{backgroundColor:\4\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),backgroundMaterial:\1===`win32`\?`none`:null\}:\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)\?/;
+  const currentSurfaceFuncMatch = currentSource.match(currentSurfaceFuncParamRegex);
+  if (currentSurfaceFuncMatch != null) {
+    const [, platformParam, appearanceParam, , darkColorsParam, darkVarFromReturn, lightVarFromReturn, transparentAppearancePredicate] =
+      currentSurfaceFuncMatch;
+    const win32Needle =
+      `:${platformParam}===\`win32\`&&!${transparentAppearancePredicate}(${appearanceParam})?`;
+    const linuxBgPrefix =
+      `:${platformParam}===\`linux\`&&!${transparentAppearancePredicate}(${appearanceParam})?{backgroundColor:${darkColorsParam}?${darkVarFromReturn}:${lightVarFromReturn},backgroundMaterial:null}:`;
+
+    if (currentSource.includes(linuxBgPrefix)) {
+      return currentSource;
+    }
+    if (currentSource.includes(win32Needle)) {
+      return currentSource.replace(win32Needle, `${linuxBgPrefix}${win32Needle.slice(1)}`);
+    }
+
+    console.warn("WARN: Could not find BrowserWindow background color needle — skipping background patch");
+    return currentSource;
+  }
+
   const funcParamRegex =
     /function\s+[A-Za-z_$][\w$]*\(\{platform:([A-Za-z_$][\w$]*),appearance:([A-Za-z_$][\w$]*),opaqueWindowsEnabled:[A-Za-z_$][\w$]*,prefersDarkColors:([A-Za-z_$][\w$]*)\}\)\{return\s*\1===`win32`&&!([A-Za-z_$][\w$]*)\(\2\)/;
   const funcMatch = currentSource.match(funcParamRegex);
@@ -714,7 +736,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
     const trayIconNeedle =
       `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
     const trayIconPatch =
-      `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}if(process.platform===\`linux\`){let e=${electronVar}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!e.isEmpty())return{defaultIcon:e,chronicleRunningIcon:null};let t=${electronVar}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null};let r=${electronVar}.nativeImage.createFromPath(${iconPathExpression});if(!r.isEmpty())return{defaultIcon:r,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
+      `for(let e of o){let t=${electronVar}.nativeImage.createFromPath(e);if(!t.isEmpty())return{defaultIcon:t,chronicleRunningIcon:null}}if(process.platform===\`linux\`){let __codexLinuxTrayIcon=${electronVar}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!__codexLinuxTrayIcon.isEmpty())return{defaultIcon:__codexLinuxTrayIcon,chronicleRunningIcon:null};let __codexLinuxAppIcon=${electronVar}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!__codexLinuxAppIcon.isEmpty())return{defaultIcon:__codexLinuxAppIcon,chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronVar}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}return{defaultIcon:await ${electronVar}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`;
     if (
       patchedSource.includes(`nativeImage.createFromPath(${packagedTrayIconPathExpression})`) ||
       patchedSource.includes(`nativeImage.createFromPath(${packagedAppIconPathExpression})`)
@@ -728,7 +750,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       patchedSource = patchedSource.replace(
         /for\(let ([A-Za-z_$][\w$]*) of ([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(\1\);if\(!\3\.isEmpty\(\)\)return\{defaultIcon:\3,chronicleRunningIcon:null\}\}return\{defaultIcon:await \4\.app\.getFileIcon\(process\.execPath,\{size:process\.platform===`win32`\?`small`:`normal`\}\),chronicleRunningIcon:null\}\}/,
         (_match, iconPathVar, candidatesVar, imageVar, electronAlias) =>
-          `for(let ${iconPathVar} of ${candidatesVar}){let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${iconPathVar});if(!${imageVar}.isEmpty())return{defaultIcon:${imageVar},chronicleRunningIcon:null}}if(process.platform===\`linux\`){let ${iconPathVar}=${electronAlias}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!${iconPathVar}.isEmpty())return{defaultIcon:${iconPathVar},chronicleRunningIcon:null};let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!${imageVar}.isEmpty())return{defaultIcon:${imageVar},chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronAlias}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}return{defaultIcon:await ${electronAlias}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`,
+          `for(let ${iconPathVar} of ${candidatesVar}){let ${imageVar}=${electronAlias}.nativeImage.createFromPath(${iconPathVar});if(!${imageVar}.isEmpty())return{defaultIcon:${imageVar},chronicleRunningIcon:null}}if(process.platform===\`linux\`){let __codexLinuxTrayIcon=${electronAlias}.nativeImage.createFromPath(${packagedTrayIconPathExpression});if(!__codexLinuxTrayIcon.isEmpty())return{defaultIcon:__codexLinuxTrayIcon,chronicleRunningIcon:null};let __codexLinuxAppIcon=${electronAlias}.nativeImage.createFromPath(${packagedAppIconPathExpression});if(!__codexLinuxAppIcon.isEmpty())return{defaultIcon:__codexLinuxAppIcon,chronicleRunningIcon:null};let __codexLinuxUpstreamTrayIcon=${electronAlias}.nativeImage.createFromPath(${iconPathExpression});if(!__codexLinuxUpstreamTrayIcon.isEmpty())return{defaultIcon:__codexLinuxUpstreamTrayIcon,chronicleRunningIcon:null}}return{defaultIcon:await ${electronAlias}.app.getFileIcon(process.execPath,{size:process.platform===\`win32\`?\`small\`:\`normal\`}),chronicleRunningIcon:null}}`,
       );
     } else {
       console.warn("WARN: Could not find tray icon fallback — skipping Linux tray icon patch");
