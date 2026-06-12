@@ -68,6 +68,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Plugin marketplace browsing now preserves upstream's `remote_plugin`
+  feature sync on Linux, so current app servers can load the remote OpenAI
+  curated catalog instead of falling back to only locally installed plugins.
 - The opt-in `remote-mobile-control` cold-start hook no longer removes
   `~/.local/bin/codex` when the launcher is actively using that symlink as
   `CODEX_CLI_PATH`.

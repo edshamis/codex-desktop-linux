@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const {
+  escapeRegExp,
   findMatchingBrace,
 } = require("./shared.js");
 
@@ -462,6 +463,7 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
     "mentions_v2",
     "plugins",
     "remote_control",
+    "remote_plugin",
     "tool_call_mcp_elicitation",
     "tool_suggest",
   ]);
@@ -486,7 +488,14 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
       /(for\(let ([A-Za-z_$][\w$]*) of [A-Za-z_$][\w$]*\)\{let ([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\[\2\];\3!=null&&\(([A-Za-z_$][\w$]*)\[\2\]=\3\)\})return \4\[([A-Za-z_$][\w$]*)\]=([A-Za-z_$][\w$]*),\4\}/u;
     const dynamicBuilderExtraMatch = currentSource.match(dynamicBuilderExtraRegex);
     if (dynamicBuilderExtraMatch != null) {
-      const [, loopBlock, , , enablementVar] = dynamicBuilderExtraMatch;
+      const [, loopBlock, , , enablementVar, featureKeyVar] = dynamicBuilderExtraMatch;
+      const featureKeyDeclaration = new RegExp(
+        `${escapeRegExp(featureKeyVar)}=\`remote_plugin\``,
+        "u",
+      );
+      if (featureKeyDeclaration.test(currentSource)) {
+        return currentSource;
+      }
       return currentSource.replace(
         dynamicBuilderExtraRegex,
         `${loopBlock}return ${enablementVar}}`,
