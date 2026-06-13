@@ -549,6 +549,83 @@ function applyLinuxAppServerFeatureEnablementPatch(currentSource) {
   ].join("");
 }
 
+function applyLinuxAppServerBackfillWaitPatch(currentSource) {
+  const helperSource =
+    "function codexLinuxIsStateDbBackfillMessage(e){return typeof e===`string`&&e.toLowerCase().includes(`state db backfill is running`)}" +
+    "function codexLinuxStateDbBackfillMessage(e){return`Codex state database backfill is still running; waiting up to 5 minutes before surfacing a startup error. ${e}`}" +
+    "function codexLinuxAppServerBackfillTimeoutMs(e,t){return t===3e4&&(e===`thread/start`||e===`config/read`||e===`account/read`)?3e5:t}";
+  const parserNeedle =
+    /function\s+([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\{if\(\2\.startsWith\(`Parse Error`\)\)return\{code:`restart-required`\};/;
+  const parserPatchedRegex =
+    /codexLinuxIsStateDbBackfillMessage\([A-Za-z_$][\w$]*\)\)return\{code:`connection-failed`/;
+  const timeoutNeedle =
+    /createRequest\(([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*),([A-Za-z_$][\w$]*)\)\{let ([A-Za-z_$][\w$]*)=([^,]+),([A-Za-z_$][\w$]*)=\3\?\.timeoutMs\?\?0,/;
+  const timeoutPatchedRegex =
+    /(?:^|[;,])\s*[A-Za-z_$][\w$]*=codexLinuxAppServerBackfillTimeoutMs\([A-Za-z_$][\w$]*,[A-Za-z_$][\w$]*\)/;
+  const shouldPatchParser = parserNeedle.test(currentSource) || parserPatchedRegex.test(currentSource);
+  const shouldPatchTimeout = timeoutNeedle.test(currentSource) || timeoutPatchedRegex.test(currentSource);
+  let patchedSource = currentSource;
+  let changed = false;
+
+  if (!patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")) {
+    const helperAnchors = [
+      "function za(e){let t=La.safeParse(e);return t.success?new Ba(t.data):e}",
+      "function za(e){",
+    ];
+    const helperAnchor = helperAnchors.find((anchor) => patchedSource.includes(anchor));
+    if (helperAnchor != null) {
+      patchedSource = patchedSource.replace(helperAnchor, `${helperSource}${helperAnchor}`);
+      changed = true;
+    }
+  }
+
+  if (shouldPatchParser && !parserPatchedRegex.test(patchedSource)) {
+    const parserPatched = patchedSource.replace(
+      parserNeedle,
+      (_match, fnName, messageVar) => {
+        const helperPrefix = patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")
+          ? ""
+          : helperSource;
+        return `${helperPrefix}function ${fnName}(${messageVar}){if(codexLinuxIsStateDbBackfillMessage(${messageVar}))return{code:\`connection-failed\`,message:codexLinuxStateDbBackfillMessage(${messageVar})};if(${messageVar}.startsWith(\`Parse Error\`))return{code:\`restart-required\`};`;
+      },
+    );
+    if (parserPatched !== patchedSource) {
+      patchedSource = parserPatched;
+      changed = true;
+    }
+  }
+
+  if (shouldPatchTimeout && !timeoutPatchedRegex.test(patchedSource)) {
+    const timeoutPatched = patchedSource.replace(
+      timeoutNeedle,
+      (_match, methodVar, paramsVar, optionsVar, requestIdVar, requestIdExpr, timeoutVar) =>
+        `createRequest(${methodVar},${paramsVar},${optionsVar}){let ${requestIdVar}=${requestIdExpr},${timeoutVar}=${optionsVar}?.timeoutMs??0;${timeoutVar}=codexLinuxAppServerBackfillTimeoutMs(${methodVar},${timeoutVar});let `,
+    );
+    if (timeoutPatched !== patchedSource) {
+      patchedSource = timeoutPatched;
+      changed = true;
+    }
+  }
+
+  if (
+    (shouldPatchParser || shouldPatchTimeout) &&
+    !patchedSource.includes("function codexLinuxIsStateDbBackfillMessage(")
+  ) {
+    console.warn(
+      "WARN: Could not insert app-server backfill wait helper — startup backfill may still time out early",
+    );
+  } else if (
+    (shouldPatchParser && !parserPatchedRegex.test(patchedSource)) ||
+    (shouldPatchTimeout && !timeoutPatchedRegex.test(patchedSource))
+  ) {
+    console.warn(
+      "WARN: App-server backfill wait patch applied only partially — startup backfill may still time out early",
+    );
+  }
+
+  return patchedSource;
+}
+
 function applyLinuxI18nGatePatch(currentSource) {
   const alreadyPatchedI18nGateRegexes = [
     /([A-Za-z_$][\w$]*)=[^;]*?\.get\(`enable_i18n`,!1\)[^;]*;let [^;]*,([A-Za-z_$][\w$]*)=[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.localeOverride\),[A-Za-z_$][\w$]*=\1\|\|\2!=null/u,
@@ -1476,6 +1553,7 @@ function patchCommentPreloadBundle(extractedDir) {
 
 module.exports = {
   applyBrowserAnnotationScreenshotPatch,
+  applyLinuxAppServerBackfillWaitPatch,
   applyLinuxAppServerFeatureEnablementPatch,
   applyLinuxBrowserUseAvailabilityPatch,
   applyLinuxBrowserUseExternalAvailabilityPatch,

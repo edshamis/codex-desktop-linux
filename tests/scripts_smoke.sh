@@ -2952,10 +2952,24 @@ if 'CODEX_LINUX_INSTANCE_ID=$CODEX_LINUX_INSTANCE_ID' not in instance_match_body
     raise SystemExit("pid_in_same_launch_instance must match instance identity from the process environment")
 if 'refresh_launch_state\ntrap cleanup_launcher EXIT' not in source:
     raise SystemExit("launcher must do an initial runtime-state refresh before warm-start IPC")
-if 'if needs_cold_start; then\n    acquire_launcher_lock\n    refresh_launch_state\nfi' not in source:
+if "trap 'exit 130' INT" not in source or "trap 'exit 143' TERM" not in source or "trap 'exit 129' HUP" not in source:
+    raise SystemExit("launcher must cleanup through EXIT after INT/TERM/HUP")
+if 'if needs_cold_start; then\n    acquire_launcher_lock\n    refresh_launch_state\n    detect_cross_install_conflict\nfi' not in source:
     raise SystemExit("launcher must re-check runtime state under the launcher lock immediately before cold launch")
-if 'flock -w 30 9' not in source:
-    raise SystemExit("launcher lock must use a bounded flock wait so a stuck launcher cannot block launches forever")
+if 'CODEX_LAUNCHER_LOCK_WAIT_SECONDS:-5' not in source:
+    raise SystemExit("launcher lock wait must default to 5 seconds so duplicate launches do not look hung")
+if 'flock -n 9' not in source or 'flock -w "$wait_seconds" 9' not in source:
+    raise SystemExit("launcher lock must first probe and then use a bounded wait")
+if "Another $CODEX_LINUX_APP_DISPLAY_NAME launcher is holding" not in source or "launcher_lock_holder_pids" not in source:
+    raise SystemExit("launcher lock waits must emit visible holder diagnostics")
+if "detect_cross_install_conflict" not in source or "Both use app id" not in source:
+    raise SystemExit("launcher must detect same-identity cross-install conflicts before cold start")
+if "reap_orphaned_runtime_processes" not in reconcile_body or "Stopping orphaned Codex runtime process" not in source:
+    raise SystemExit("reconcile_runtime_state must stop orphaned runtime processes after stale launcher state")
+if "pid_is_orphaned_runtime_process" not in source or "chrome_crashpad_handler|node" not in source:
+    raise SystemExit("orphan cleanup must cover same-app Electron helpers, crashpad, and managed Node children")
+if "CODEX_ELECTRON_DISABLE_GPU_COMPOSITING=1" not in launch_body:
+    raise SystemExit("launcher must log the GPU compositing workaround hint for side-panel flicker")
 if launch_body.count("release_launcher_lock") != 2:
     raise SystemExit("launch_electron must release the launcher lock on both the warm-start and cold-start paths")
 if launch_body.index("release_launcher_lock", launch_body.index('echo "$ELECTRON_PID" > "$APP_PID_FILE"')) > launch_body.index('wait "$ELECTRON_PID"'):
