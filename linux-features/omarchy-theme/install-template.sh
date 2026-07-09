@@ -30,10 +30,7 @@ generated_path="$omarchy_home/current/theme/codex-desktop.css"
 
 if [ -f "$target_path" ] && ! cmp -s "$source_path" "$target_path"; then
     warn "$target_path already exists with local changes; leaving it untouched"
-    exit 0
-fi
-
-if [ ! -f "$target_path" ]; then
+elif [ ! -f "$target_path" ]; then
     if ! mkdir -p "$target_dir" || ! install -m 0644 "$source_path" "$target_path"; then
         warn "could not install Omarchy template at $target_path"
         exit 0

@@ -248,6 +248,12 @@ test("webview server safely serves default and overridden user stylesheets", asy
     const serverPath = path.join(REPO_ROOT, "launcher", "webview-server.py");
     const webviewDir = path.join(tempDir, "webview");
     const generatedCss = path.join(tempDir, "generated.css");
+    const configuredDefaultLine = fs
+      .readFileSync(path.join(FEATURE_DIR, "user-stylesheet.env"), "utf8")
+      .split("\n")
+      .find((line) => line.startsWith("CODEX_LINUX_WEBVIEW_USER_STYLESHEET_DEFAULT="));
+    assert.ok(configuredDefaultLine);
+    const configuredDefault = configuredDefaultLine.slice(configuredDefaultLine.indexOf("=") + 1);
     fs.mkdirSync(webviewDir, { recursive: true });
     fs.writeFileSync(path.join(webviewDir, "index.html"), "<!doctype html>");
 
@@ -274,6 +280,55 @@ test("webview server safely serves default and overridden user stylesheets", asy
       },
     );
 
+    const defaultHome = path.join(tempDir, "default-home");
+    const defaultGeneratedCss = path.join(
+      defaultHome,
+      ".config",
+      "omarchy",
+      "current",
+      "theme",
+      "codex-desktop.css",
+    );
+    fs.mkdirSync(path.dirname(defaultGeneratedCss), { recursive: true });
+    fs.writeFileSync(defaultGeneratedCss, "body{color:default-config}");
+    await withWebviewServer(
+      serverPath,
+      webviewDir,
+      {
+        HOME: defaultHome,
+        CODEX_OMARCHY_CONFIG_HOME: "",
+        CODEX_LINUX_WEBVIEW_USER_STYLESHEET_DEFAULT: configuredDefault,
+      },
+      async (port) => {
+        const defaultConfigured = await request(port, THEME_CSS_ENDPOINT);
+        assert.equal(defaultConfigured.status, 200);
+        assert.equal(defaultConfigured.body.toString(), "body{color:default-config}");
+      },
+    );
+
+    const customOmarchyHome = path.join(tempDir, "custom-omarchy");
+    const customGeneratedCss = path.join(
+      customOmarchyHome,
+      "current",
+      "theme",
+      "codex-desktop.css",
+    );
+    fs.mkdirSync(path.dirname(customGeneratedCss), { recursive: true });
+    fs.writeFileSync(customGeneratedCss, "body{color:custom-config}");
+    await withWebviewServer(
+      serverPath,
+      webviewDir,
+      {
+        CODEX_OMARCHY_CONFIG_HOME: customOmarchyHome,
+        CODEX_LINUX_WEBVIEW_USER_STYLESHEET_DEFAULT: configuredDefault,
+      },
+      async (port) => {
+        const customized = await request(port, THEME_CSS_ENDPOINT);
+        assert.equal(customized.status, 200);
+        assert.equal(customized.body.toString(), "body{color:custom-config}");
+      },
+    );
+
     const overrideCss = path.join(tempDir, "override.css");
     fs.writeFileSync(overrideCss, "body{color:papayawhip}");
     await withWebviewServer(
@@ -294,7 +349,7 @@ test("webview server safely serves default and overridden user stylesheets", asy
   }
 });
 
-test("prelaunch hook installs the template, refreshes once, and preserves local edits", () => {
+test("prelaunch hook installs the template, refreshes missing CSS, and preserves local edits", () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "codex-omarchy-template-install-"));
   try {
     const home = path.join(tempDir, "home");
@@ -340,7 +395,8 @@ test("prelaunch hook installs the template, refreshes once, and preserves local 
     });
     assert.equal(second.status, 0, second.stderr);
     assert.equal(fs.readFileSync(target, "utf8"), "/* local customization */\n");
-    assert.equal(fs.readFileSync(callLog, "utf8"), "theme refresh\n");
+    assert.equal(fs.readFileSync(generated, "utf8"), "generated");
+    assert.equal(fs.readFileSync(callLog, "utf8"), "theme refresh\ntheme refresh\n");
     assert.match(second.stderr, /leaving it untouched/);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
