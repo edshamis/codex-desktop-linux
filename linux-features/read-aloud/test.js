@@ -13,6 +13,7 @@ const {
   applyGeneralSettingsWrapperPatch,
   applyAssistantRenderPatch,
   applyIndexRuntimePatch,
+  applyLinuxDesktopSettingsPatch,
   applyMainBundlePatch,
   applySettingsAssetPatch,
   applySettingsPageNavPatch,
@@ -26,6 +27,10 @@ const {
   normalizePatchDescriptors,
 } = require("../../scripts/patches/engine.js");
 const { createPatchReport } = require("../../scripts/lib/patch-report.js");
+const {
+  applyLinuxExternalOpenEnvPatch,
+} = require("../../scripts/patches/impl/main-process/browser.js");
+const { requireName } = require("../../scripts/patches/lib/minified-js.js");
 
 function twice(fn, source) {
   const patched = fn(source);
@@ -42,6 +47,46 @@ function captureWarnings(fn) {
   } finally {
     console.warn = originalWarn;
   }
+}
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function linuxDesktopSettingsFixture() {
+  return 'var React={Fragment:{},Component:class{constructor(){this.state={}}setState(e){this.state={...this.state,...e}}}},$={jsx(){},jsxs(){}},KEYS={promptWindow:"codex-linux-prompt-window-enabled",systemTray:"codex-linux-system-tray-enabled",warmStart:"codex-linux-warm-start-enabled",autoUpdateOnExit:"codex-linux-auto-update-on-exit"};function codexLinuxChecked(e){return e===!0}class LinuxToggle extends React.Component{}function SettingsRow(){}function SettingsSection(){}function SettingsGroup(){}function SettingsPage(){}function Toggle(){}function LinuxBuildInfoPanel(){}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:"Linux desktop",subtitle:"Launcher, tray, prompt window, and update behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close ChatGPT",description:"When on, a ready update waits for ChatGPT to close and then installs. When off, updates wait until you click Update."})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Build"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})]})})}export{LinuxDesktopSettings,LinuxDesktopSettings as default};';
+}
+
+function createLinuxReadAloudSettings(post) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-read-aloud-runtime-"));
+  try {
+    const assets = path.join(root, "webview", "assets");
+    fs.mkdirSync(assets, { recursive: true });
+    const asset = path.join(assets, "linux-desktop-settings-linux.js");
+    fs.writeFileSync(asset, linuxDesktopSettingsFixture());
+    assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 1 });
+    const patched = fs
+      .readFileSync(asset, "utf8")
+      .replace(
+        "export{LinuxDesktopSettings,LinuxDesktopSettings as default};",
+        "globalThis.LinuxReadAloudSettings=LinuxReadAloudSettings;",
+      );
+    const runtime = {};
+    new Function("globalThis", "__post", patched)(runtime, post);
+    return new runtime.LinuxReadAloudSettings();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function settlePromises() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 test("main bundle patch adds a Linux read aloud handler", () => {
@@ -85,6 +130,20 @@ test("main bundle patch adds a Linux read aloud handler", () => {
   // parentheses any custom voice forced the Hebrew espeak voice.
   assert.match(patched, /let espeakVoice=voice\|\|\(hasHebrew\?`he`:`en-us`\);/);
   assert.doesNotThrow(() => new Function("require", "process", patched));
+});
+
+test("main bundle helper preserves the core Electron binding across patch reruns", () => {
+  const source = [
+    '"use strict";',
+    'let c=require("electron"),e=require(`node:child_process`),f=require(`node:fs`),p=require(`node:path`),o=require(`node:os`);',
+    'var h={handlers:{"set-vs-context":async()=>{},"native-desktop-apps":async()=>({apps:[]})}};',
+  ].join("");
+  const withExternalOpen = applyLinuxExternalOpenEnvPatch(source);
+  const patched = applyMainBundlePatch(withExternalOpen);
+
+  assert.equal(requireName(patched, "electron"), "c");
+  assert.match(patched, /let loadElectron=\(\)=>require\(`electron`\)/);
+  assert.equal(applyLinuxExternalOpenEnvPatch(patched), patched);
 });
 
 test("webview runtime appends only once", () => {
@@ -1387,10 +1446,7 @@ test("settings asset patch adds read aloud controls to generated Linux desktop s
     const assets = path.join(root, "webview", "assets");
     fs.mkdirSync(assets, { recursive: true });
     const asset = path.join(assets, "linux-desktop-settings-linux.js");
-    fs.writeFileSync(
-      asset,
-      'var React={Fragment:{},Component:class{}},$={jsx(){},jsxs(){}},KEYS={promptWindow:"codex-linux-prompt-window-enabled",systemTray:"codex-linux-system-tray-enabled",warmStart:"codex-linux-warm-start-enabled",autoUpdateOnExit:"codex-linux-auto-update-on-exit"};function codexLinuxChecked(){}class LinuxToggle extends React.Component{}function SettingsRow(){}function SettingsSection(){}function SettingsGroup(){}function SettingsPage(){}function Toggle(){}function LinuxBuildInfoPanel(){}function LinuxDesktopSettings(){return $.jsx(SettingsPage,{title:"Linux desktop",subtitle:"Launcher, tray, prompt window, and update behavior.",children:$.jsxs("div",{className:"flex flex-col gap-6",children:[$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Updates"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxToggle,{settingKey:KEYS.autoUpdateOnExit,label:"Install updates when you close ChatGPT",description:"When on, a ready update waits for ChatGPT to close and then installs. When off, updates wait until you click Update."})})})]}),$.jsxs(SettingsSection,{className:"gap-2",children:[$.jsx(SettingsSection.Header,{title:"Build"}),$.jsx(SettingsSection.Content,{children:$.jsx(SettingsGroup,{children:$.jsx(LinuxBuildInfoPanel,{})})})]})]})})}export{LinuxDesktopSettings,LinuxDesktopSettings as default};',
-    );
+    fs.writeFileSync(asset, linuxDesktopSettingsFixture());
 
     assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 1 });
     const patched = fs.readFileSync(asset, "utf8");
@@ -1409,10 +1465,117 @@ test("settings asset patch adds read aloud controls to generated Linux desktop s
     );
     assert.doesNotMatch(patched, /LinuxSettingsSection/);
     assert.doesNotMatch(patched, /LinuxSettingsRow/);
+
+    const stale = patched
+      .replace("this._enabledWrite=0,this._speedWrite=0,", "")
+      .replace("Promise.allSettled([", "Promise.all([");
+    fs.writeFileSync(asset, stale);
+    assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 1 });
+    const refreshed = fs.readFileSync(asset, "utf8");
+    assert.match(refreshed, /this\._enabledWrite=0,this\._speedWrite=0/);
+    assert.match(refreshed, /Promise\.allSettled\(\[/);
+    assert.doesNotMatch(refreshed, /Promise\.all\(\[/);
     assert.deepEqual(applySettingsAssetPatch(root), { matched: true, changed: 0 });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("Linux desktop read aloud settings refresh fails closed on a malformed class", () => {
+  const patched = applyLinuxDesktopSettingsPatch(linuxDesktopSettingsFixture());
+  const malformed = patched.replace(
+    "}}function LinuxDesktopSettings(){",
+    "}function LinuxDesktopSettings(){",
+  );
+  assert.notEqual(malformed, patched);
+
+  const { result, warnings } = captureWarnings(() =>
+    applyLinuxDesktopSettingsPatch(malformed));
+  assert.equal(result, malformed);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /Could not refresh existing Linux read aloud settings/);
+});
+
+test("generated Linux desktop read aloud settings preserve successful independent reads", async () => {
+  const settings = createLinuxReadAloudSettings((method, { params }) => {
+    assert.equal(method, "get-global-state");
+    if (params.key === "codex-linux-read-aloud-enabled") {
+      return Promise.resolve({ value: true });
+    }
+    if (params.key === "codex-linux-read-aloud-kokoro-speed") {
+      return Promise.reject(new Error("speed unavailable"));
+    }
+    throw new Error(`Unexpected settings key: ${params.key}`);
+  });
+
+  settings.componentDidMount();
+  await settlePromises();
+
+  assert.equal(settings.state.enabled, true);
+  assert.equal(settings.state.speed, 1.05);
+  assert.equal(settings.state.isLoading, false);
+  assert.equal(settings.state.error, "speed unavailable");
+  settings.componentWillUnmount();
+});
+
+test("generated Linux desktop read aloud settings ignore superseded speed failures", async () => {
+  const speedWrites = [];
+  const settings = createLinuxReadAloudSettings((method, { params }) => {
+    if (method === "get-global-state") {
+      return Promise.resolve({
+        value: params.key === "codex-linux-read-aloud-enabled" ? true : 1.4,
+      });
+    }
+    assert.equal(method, "set-global-state");
+    assert.equal(params.key, "codex-linux-read-aloud-kokoro-speed");
+    const request = deferred();
+    speedWrites.push(request);
+    return request.promise;
+  });
+
+  settings.componentDidMount();
+  await settlePromises();
+  settings.updateSpeed({ currentTarget: { value: "1.15" } });
+  settings.updateSpeed({ currentTarget: { value: "1.30" } });
+  assert.equal(settings.state.speed, 1.3);
+
+  speedWrites[1].resolve();
+  await settlePromises();
+  speedWrites[0].reject(new Error("older write failed"));
+  await settlePromises();
+
+  assert.equal(settings.state.speed, 1.3);
+  assert.equal(settings.state.error, null);
+  settings.componentWillUnmount();
+});
+
+test("generated Linux desktop read aloud settings ignore superseded toggle errors", async () => {
+  const enabledWrites = [];
+  const settings = createLinuxReadAloudSettings((method, { params }) => {
+    if (method === "get-global-state") {
+      return Promise.resolve({
+        value: params.key === "codex-linux-read-aloud-enabled" ? false : 1.05,
+      });
+    }
+    assert.equal(method, "set-global-state");
+    assert.equal(params.key, "codex-linux-read-aloud-enabled");
+    const request = deferred();
+    enabledWrites.push(request);
+    return request.promise;
+  });
+
+  settings.componentDidMount();
+  await settlePromises();
+  settings.updateEnabled(true);
+  settings.updateEnabled(false);
+  enabledWrites[1].resolve();
+  await settlePromises();
+  enabledWrites[0].reject(new Error("older toggle failed"));
+  await settlePromises();
+
+  assert.equal(settings.state.enabled, false);
+  assert.equal(settings.state.error, null);
+  settings.componentWillUnmount();
 });
 
 test("settings asset patch removes an older generated keybinds read aloud toggle", () => {
