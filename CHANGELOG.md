@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The Add Project folder picker is no longer parented to the Codex window on
+  Linux X11. This avoids a GNOME Shell modal input grab that could lock desktop
+  input and flood system logs, while preserving parented dialogs on Wayland,
+  macOS, and Windows.
 - Resuming a completed thread no longer leaves it registered as streaming when
   the app server reports no active runtime. This clears stale stream ownership
   before the next message instead of leaving the renderer in a repeated thread

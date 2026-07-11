@@ -94,6 +94,7 @@ const {
   applyLinuxTerminalUserPathPatch,
   applyLinuxWorkerFileManagerPatch,
   applyLinuxXdgDocumentsDirPatch,
+  applyLinuxX11ProjectPickerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,
 } = require("./patches/impl/main-process/misc.js");
 const {
@@ -1050,6 +1051,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-skills-list-dedupe",
     "linux-config-write-version-conflict",
     "linux-application-menu",
+    "linux-x11-project-picker",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
     "linux-window-controls-safe-area",
@@ -1091,6 +1093,10 @@ test("default core patch descriptors are grouped and unique", () => {
     descriptors.find(
       (descriptor) => descriptor.id === "linux-bundled-plugin-reconcile-stale-snapshot",
     )?.ciPolicy,
+    "optional",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-x11-project-picker")?.ciPolicy,
     "optional",
   );
   assert.equal(
@@ -1815,6 +1821,70 @@ test("adds Linux file manager support without relying on exact minified variable
   assert.match(patched, /linux:\{label:`File Manager`/);
   assert.match(patched, /detect:\(\)=>`linux-file-manager`/);
   assert.match(patched, /n\.shell\.openPath\(__codexOpenTarget\)/);
+});
+
+test("opens the project picker without a parent window on Linux X11", async () => {
+  const source =
+    "class T{async pickLocalWorkspaceRoots(e,t=!1){if(this.host.id!==`local`)throw Error(`local only`);let n=[`openDirectory`,`createDirectory`];t&&n.push(`multiSelections`),await this.shouldShowHiddenFilesInPicker()&&n.push(`showHiddenFiles`);let r={properties:n,title:`Select Project Root`},i=c.BrowserWindow.fromWebContents(e),a=i==null?await c.dialog.showOpenDialog(r):await c.dialog.showOpenDialog(i,r);return a.canceled?[]:(await Promise.all(a.filePaths.map(e=>this.resolveWorkspaceRoot(e)))).filter(e=>e!=null)}}";
+  const patched = applyPatchTwice(applyLinuxX11ProjectPickerPatch, source);
+
+  assert.match(patched, /codexLinuxUseUnparentedX11ProjectPicker/);
+
+  async function run(platform, env) {
+    const calls = [];
+    const context = {
+      process: { platform, env },
+      calls,
+      c: {
+        BrowserWindow: { fromWebContents: () => ({ id: "parent" }) },
+        dialog: {
+          showOpenDialog: async (...args) => {
+            calls.push(args);
+            return { canceled: false, filePaths: ["/tmp/project"] };
+          },
+        },
+      },
+    };
+    vm.runInNewContext(
+      `${patched};manager=new T;manager.host={id:\`local\`};manager.shouldShowHiddenFilesInPicker=async()=>false;manager.resolveWorkspaceRoot=async e=>e`,
+      context,
+    );
+    const roots = await context.manager.pickLocalWorkspaceRoots({});
+    return { argumentCount: calls[0].length, roots: Array.from(roots) };
+  }
+
+  assert.deepEqual(await run("linux", { XDG_SESSION_TYPE: " X11 ", DISPLAY: ":0" }), {
+    argumentCount: 1,
+    roots: ["/tmp/project"],
+  });
+  assert.deepEqual(await run("linux", { DISPLAY: ":0" }), {
+    argumentCount: 1,
+    roots: ["/tmp/project"],
+  });
+  assert.deepEqual(await run("linux", { DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }), {
+    argumentCount: 2,
+    roots: ["/tmp/project"],
+  });
+  assert.deepEqual(await run("linux", { XDG_SESSION_TYPE: "unknown", DISPLAY: ":0" }), {
+    argumentCount: 1,
+    roots: ["/tmp/project"],
+  });
+  assert.deepEqual(
+    await run("linux", { XDG_SESSION_TYPE: "unknown", DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }),
+    { argumentCount: 2, roots: ["/tmp/project"] },
+  );
+  assert.deepEqual(await run("linux", { XDG_SESSION_TYPE: " Wayland ", DISPLAY: ":0" }), {
+    argumentCount: 2,
+    roots: ["/tmp/project"],
+  });
+  assert.deepEqual(
+    await run("linux", { XDG_SESSION_TYPE: "wayland", DISPLAY: ":0", WAYLAND_DISPLAY: "wayland-0" }),
+    { argumentCount: 2, roots: ["/tmp/project"] },
+  );
+  assert.deepEqual(await run("darwin", {}), {
+    argumentCount: 2,
+    roots: ["/tmp/project"],
+  });
 });
 
 test("adds Linux file manager support to the worker open target registry", () => {
