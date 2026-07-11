@@ -53,8 +53,8 @@ MULTI_LAUNCH_ACTIVE=0
 CODEX_LINUX_INSTANCE_ID=""
 LAUNCHER_ARGS=()
 
-# Internal marker consumed by patched Electron bundles; never trust inheritance.
-unset CODEX_LINUX_MULTI_LAUNCH
+# Internal markers consumed by patched Electron bundles; never trust inheritance.
+unset CODEX_LINUX_MULTI_LAUNCH CODEX_LINUX_MULTI_LAUNCH_TRAY
 
 early_truthy_env_value() {
     case "${1:-}" in
@@ -178,6 +178,15 @@ configure_multi_launch_instance() {
     MULTI_LAUNCH_ACTIVE=1
     CODEX_LINUX_MULTI_LAUNCH=1
 
+    case "${CODEX_MULTI_LAUNCH_TRAY:-0}" in
+        0|"") ;;
+        1) CODEX_LINUX_MULTI_LAUNCH_TRAY=1 ;;
+        *)
+            echo "CODEX_MULTI_LAUNCH_TRAY must be 0 or 1" >&2
+            exit 1
+            ;;
+    esac
+
     APP_STATE_DIR="$base_state_dir/instances/$CODEX_LINUX_INSTANCE_ID"
     APP_PID_FILE="$APP_STATE_DIR/app.pid"
     WEBVIEW_PID_FILE="$APP_STATE_DIR/webview.pid"
@@ -194,7 +203,7 @@ configure_multi_launch_instance() {
     else
         CODEX_ELECTRON_USER_DATA_DIR="$APP_STATE_DIR/electron-user-data"
     fi
-    export CODEX_ELECTRON_USER_DATA_DIR CODEX_LINUX_INSTANCE_ID CODEX_LINUX_MULTI_LAUNCH CODEX_LINUX_WEBVIEW_PORT
+    export CODEX_ELECTRON_USER_DATA_DIR CODEX_LINUX_INSTANCE_ID CODEX_LINUX_MULTI_LAUNCH CODEX_LINUX_MULTI_LAUNCH_TRAY CODEX_LINUX_WEBVIEW_PORT
 }
 
 configure_multi_launch_instance "$@"
@@ -255,6 +264,7 @@ Environment:
                               Override --force-renderer-accessibility; auto forces it only when assistive
                               technology is detected and never under WSLg or native wayland-gpu
   CODEX_MULTI_LAUNCH=1        Treat normal launches like --new-instance
+  CODEX_MULTI_LAUNCH_TRAY=0|1 Show a system tray item for --new-instance (default: 0)
   CODEX_MULTI_LAUNCH_PORT_RANGE=START-END
                               Port allocation range for --new-instance (default: CODEX_WEBVIEW_PORT through +4)
 

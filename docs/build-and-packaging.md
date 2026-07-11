@@ -144,6 +144,14 @@ CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh --new-instance
 CODEX_MULTI_LAUNCH=1 CODEX_MULTI_LAUNCH_PORT_RANGE=5175-5199 ./codex-app/start.sh
 ```
 
+Secondary instances do not create a system-tray icon by default, and closing
+their last window exits normally. To keep an individual secondary instance in
+the tray and retain close-to-tray behavior, set `CODEX_MULTI_LAUNCH_TRAY=1`:
+
+```bash
+CODEX_MULTI_LAUNCH_TRAY=1 ./codex-app/start.sh --new-instance
+```
+
 ## Package Formats
 
 After `make build-app` or `make build-app-fresh`, build a package from

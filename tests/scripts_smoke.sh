@@ -4828,7 +4828,7 @@ if 'export CODEX_HOME CODEX_LINUX_APP_ID CODEX_LINUX_APP_DISPLAY_NAME CODEX_LINU
     raise SystemExit("launcher must export CODEX_HOME and Linux feature resource directory")
 if 'configure_multi_launch_instance "$@"' not in source:
     raise SystemExit("launcher must configure multi-launch before deriving WEBVIEW_ORIGIN")
-if 'unset CODEX_LINUX_MULTI_LAUNCH' not in source.split('parse_launcher_args() {', 1)[0]:
+if 'unset CODEX_LINUX_MULTI_LAUNCH CODEX_LINUX_MULTI_LAUNCH_TRAY' not in source.split('parse_launcher_args() {', 1)[0]:
     raise SystemExit("launcher must clear inherited internal multi-launch markers before parsing args")
 if '$((CODEX_LINUX_WEBVIEW_PORT + 4))' not in source:
     raise SystemExit("multi-launch default range must cap the default at five ports")
@@ -4844,6 +4844,8 @@ if 'CODEX_LINUX_INSTANCE_ID="port-$CODEX_LINUX_WEBVIEW_PORT"' not in multi_body:
     raise SystemExit("multi-launch must derive a stable instance id from the allocated port")
 if 'CODEX_LINUX_MULTI_LAUNCH=1' not in multi_body:
     raise SystemExit("multi-launch must export an app-visible multi-launch marker")
+if 'case "${CODEX_MULTI_LAUNCH_TRAY:-0}" in' not in multi_body or '1) CODEX_LINUX_MULTI_LAUNCH_TRAY=1 ;;' not in multi_body:
+    raise SystemExit("multi-launch must resolve the optional tray override")
 if 'export CODEX_ELECTRON_USER_DATA_DIR CODEX_LINUX_INSTANCE_ID CODEX_LINUX_MULTI_LAUNCH CODEX_LINUX_WEBVIEW_PORT' not in multi_body:
     raise SystemExit("multi-launch must export instance identity for Electron")
 if 'APP_STATE_DIR="$base_state_dir/instances/$CODEX_LINUX_INSTANCE_ID"' not in multi_body:
@@ -6995,7 +6997,7 @@ JS
     assert_contains "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate'
     assert_contains "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`'
     assert_contains "$extracted/.vite/build/main-test.js" 'this.trayMenuThreads=e.trayMenuThreads,process.platform===`linux`&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.setLinuxTrayContextMenu?.()'
-    assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`&&process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe();'
+    assert_contains "$extracted/.vite/build/main-test.js" '(E||process.platform===`linux`&&(process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`||process.env.CODEX_LINUX_MULTI_LAUNCH_TRAY===`1`)&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe();'
     assert_not_contains "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&this.tray.setContextMenu?.(e),this.tray.popUpContextMenu(e)'
     assert_not_contains "$output_log" 'WARN: Could not find tray'
 
@@ -7008,7 +7010,7 @@ if (!closeSnippet) {
   throw new Error("Could not extract patched Linux close handler");
 }
 
-function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true } = {}) {
+function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, trayEnabled = true, multiLaunch = false, multiLaunchTray = false } = {}) {
   const state = { hideCalls: 0 };
   const controller = {
     isAppQuitting,
@@ -7024,12 +7026,12 @@ function registerCloseHandler({ quitInProgress = false, isAppQuitting = false, t
     "state",
     `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
   );
-  const makeHandler = factory({ platform: "linux" }, () => quitInProgress, state);
+  const makeHandler = factory({ platform: "linux", env: { ...(multiLaunch ? { CODEX_LINUX_MULTI_LAUNCH: "1" } : {}), ...(multiLaunchTray ? { CODEX_LINUX_MULTI_LAUNCH_TRAY: "1" } : {}) } }, () => quitInProgress, state);
   const handler = makeHandler.call(controller);
   return { handler, state };
 }
 
-function runCloseWithoutHelper({ trayEnabled = true, isAppQuitting = false } = {}) {
+function runCloseWithoutHelper({ trayEnabled = true, isAppQuitting = false, multiLaunch = false, multiLaunchTray = false } = {}) {
   const event = {
     prevented: false,
     preventDefault() {
@@ -7050,7 +7052,7 @@ function runCloseWithoutHelper({ trayEnabled = true, isAppQuitting = false } = {
     "state",
     `return function(){const v=true;const f=\`local\`;const k={handlers:{},on(event,handler){this.handlers[event]=handler},hide(){state.hideCalls+=1}};${closeSnippet};return k.handlers.close;};`,
   );
-  const handler = factory({ platform: "linux" }, state).call(controller);
+  const handler = factory({ platform: "linux", env: { ...(multiLaunch ? { CODEX_LINUX_MULTI_LAUNCH: "1" } : {}), ...(multiLaunchTray ? { CODEX_LINUX_MULTI_LAUNCH_TRAY: "1" } : {}) } }, state).call(controller);
   handler(event);
   return { event, state };
 }
@@ -7086,6 +7088,16 @@ result = runCloseWithoutHelper({ trayEnabled: true, isAppQuitting: false });
 if (!result.event.prevented || result.state.hideCalls !== 1) {
   throw new Error("Linux close should still hide to tray when the quit helper is unavailable");
 }
+
+result = runClose({ trayEnabled: true, multiLaunch: true });
+if (result.event.prevented || result.state.hideCalls !== 0) {
+  throw new Error("trayless multi-launch close should exit normally");
+}
+
+result = runClose({ trayEnabled: true, multiLaunch: true, multiLaunchTray: true });
+if (!result.event.prevented || result.state.hideCalls !== 1) {
+  throw new Error("multi-launch tray override should retain close-to-tray");
+}
 NODE
 
     node "$REPO_DIR/scripts/patch-linux-window-ui.js" "$extracted" >"$output_log" 2>&1
@@ -7103,7 +7115,7 @@ NODE
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'let e=process.platform===`linux`&&this.setLinuxTrayContextMenu?this.setLinuxTrayContextMenu():n.Menu.buildFromTemplate' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'if(process.platform===`linux`)return;e.once(`menu-will-show`' '1'
     assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&!(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress())&&this.setLinuxTrayContextMenu?.()' '1'
-    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe' '1'
+    assert_occurrence_count "$extracted/.vite/build/main-test.js" 'process.platform===`linux`&&(process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`||process.env.CODEX_LINUX_MULTI_LAUNCH_TRAY===`1`)&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled()))&&oe' '1'
 }
 
 test_linux_explicit_quit_patch_smoke() {
@@ -7852,6 +7864,13 @@ async function boot(settings = {}, env = { CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "
     CODEX_LINUX_MULTI_LAUNCH: "1",
   });
   assert(state.trayStartupCalls === 0, "multi-launch instances should not start an additional Linux tray item");
+
+  await boot({}, {
+    CODEX_DESKTOP_LAUNCH_ACTION_SOCKET: "/tmp/codex-multi-tray.sock",
+    CODEX_LINUX_MULTI_LAUNCH: "1",
+    CODEX_LINUX_MULTI_LAUNCH_TRAY: "1",
+  });
+  assert(state.trayStartupCalls === 1, "multi-launch tray override should start a tray item");
 })().catch((error) => {
   console.error(error.stack || error);
   process.exit(1);

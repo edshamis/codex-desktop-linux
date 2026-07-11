@@ -102,6 +102,10 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   }
   const packagedTrayIconPathExpression = "process.resourcesPath+`/../.codex-linux/codex-desktop-tray.png`";
   const packagedAppIconPathExpression = "process.resourcesPath+`/../.codex-linux/codex-desktop.png`";
+  // The launcher sets these internal markers only for an explicit multi-launch
+  // invocation. A secondary instance needs both a tray item and close-to-tray
+  // enabled, otherwise closing its last window would leave it inaccessible.
+  const multiLaunchTrayEnabledExpression = "(process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`||process.env.CODEX_LINUX_MULTI_LAUNCH_TRAY===`1`)";
 
   const trayGuardNeedle =
     "process.platform!==`win32`&&process.platform!==`darwin`?null:";
@@ -143,7 +147,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   }
 
   const patchedCloseToTrayRegex =
-    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
+    /if\(\(process\.platform===`win32`\|\|process\.platform===`linux`\)&&!this\.isAppQuitting&&!\(typeof codexLinuxIsQuitInProgress===`function`&&codexLinuxIsQuitInProgress\(\)\)&&\(process\.env\.CODEX_LINUX_MULTI_LAUNCH!==`1`\|\|process\.env\.CODEX_LINUX_MULTI_LAUNCH_TRAY===`1`\)&&this\.options\.canHideLastWindowToTray\?\.\(\)===!0&&![A-Za-z_$][\w$]*\)\{[A-Za-z_$][\w$]*\.preventDefault\(\),[A-Za-z_$][\w$]*\.hide\(\);return\}/;
   if (patchedCloseToTrayRegex.test(patchedSource)) {
     // Already patched with a newer minifier's window variable.
   } else {
@@ -154,7 +158,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
       const [, gateMethodName, hasOtherWindowVar, eventVar, windowVar] = closeToTrayMatch;
       patchedSource = patchedSource.replace(
         closeToTrayRegex,
-        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&this.options.${gateMethodName}?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
+        `if((process.platform===\`win32\`||process.platform===\`linux\`)&&!this.isAppQuitting&&!(typeof codexLinuxIsQuitInProgress===\`function\`&&codexLinuxIsQuitInProgress())&&${multiLaunchTrayEnabledExpression}&&this.options.${gateMethodName}?.()===!0&&!${hasOtherWindowVar}){${eventVar}.preventDefault(),${windowVar}.hide();return}`,
       );
     } else {
       console.warn("WARN: Could not find close-to-tray condition — skipping Linux close-to-tray patch");
@@ -247,7 +251,7 @@ function applyLinuxTrayPatch(currentSource, iconPathExpression) {
   // Multi-launch instances use isolated profiles, so their tray preference
   // starts enabled independently. Keep secondary/dev instances out of SNI;
   // otherwise every --new-instance launch adds another identical tray item.
-  const trayEnabledExpression = "process.platform===`linux`&&process.env.CODEX_LINUX_MULTI_LAUNCH!==`1`&&(typeof codexLinuxIsTrayEnabled!==`function`||codexLinuxIsTrayEnabled())";
+  const trayEnabledExpression = `process.platform===\`linux\`&&${multiLaunchTrayEnabledExpression}&&(typeof codexLinuxIsTrayEnabled!==\`function\`||codexLinuxIsTrayEnabled())`;
   const traySetup = findDynamicTraySetup(patchedSource);
   const dynamicTrayStartupMatch = traySetup == null
     ? null
