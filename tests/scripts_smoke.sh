@@ -2464,10 +2464,54 @@ test_candidate_install_is_transactional() {
     )
 }
 
+test_candidate_promotion_is_serialized() {
+    info "Checking accepted candidate promotion is serialized per target"
+    local workspace="$TMP_DIR/candidate-promotion-lock"
+    local candidate="$workspace/candidate"
+    local final="$workspace/final"
+    local lock_file="$workspace/.final.promotion.lock"
+    local release_fifo="$workspace/release"
+    mkdir -p "$candidate"
+    printf '%s\n' "new" >"$candidate/version"
+    mkfifo "$release_fifo"
+
+    (
+        exec 8>"$lock_file"
+        flock 8
+        touch "$workspace/locked"
+        read -r _ <"$release_fifo"
+    ) &
+    local holder_pid=$!
+    while [ ! -f "$workspace/locked" ]; do sleep 0.01; done
+
+    (
+        error() { echo "[test][ERROR] $*" >&2; return 1; }
+        info() { :; }
+        warn() { :; }
+        assert_install_target_not_running() { :; }
+        # shellcheck source=scripts/lib/candidate-install.sh
+        . "$REPO_DIR/scripts/lib/candidate-install.sh"
+        promote_candidate_install "$candidate" "$final"
+    ) &
+    local promotion_pid=$!
+    sleep 0.1
+    [ -d "$candidate" ] || fail "Promotion advanced while another process held the target lock"
+    printf '%s\n' "release" >"$release_fifo"
+    wait "$holder_pid"
+    wait "$promotion_pid"
+    [ "$(cat "$final/version")" = "new" ] || fail "Serialized promotion did not install the candidate"
+}
+
 test_transactional_install_reenters_with_current_bash() {
     info "Checking transactional install re-entry uses the active Bash binary"
     assert_contains "$REPO_DIR/install.sh" '"\$BASH" "\$SCRIPT_DIR/install.sh" "\${original_args\[@\]}"'
-    assert_contains "$REPO_DIR/install.sh" '"\$BASH" "\$SCRIPT_DIR/install.sh" --inspect'
+}
+
+test_transactional_install_uses_managed_node_and_isolated_reports() {
+    info "Checking transactional acceptance uses managed Node and isolated reports"
+    assert_contains "$REPO_DIR/install.sh" 'CODEX_ACCEPTANCE_NODE="\$CODEX_MANAGED_NODE_RUNTIME_DIR/bin/node"'
+    assert_contains "$REPO_DIR/install.sh" 'report_dir="\$report_base/transactions/\$transaction_id"'
+    assert_contains "$REPO_DIR/install.sh" '"\$CODEX_ACCEPTANCE_NODE" "\$SCRIPT_DIR/scripts/validate-upstream-dmg.js"'
 }
 
 test_installer_cleanup_handles_readonly_trees() {
@@ -8614,7 +8658,9 @@ main() {
     test_fresh_reuse_dmg_uses_cache_when_metadata_matches
     test_rebuild_candidate_uses_validated_default_dmg
     test_candidate_install_is_transactional
+    test_candidate_promotion_is_serialized
     test_transactional_install_reenters_with_current_bash
+    test_transactional_install_uses_managed_node_and_isolated_reports
     test_installer_cleanup_handles_readonly_trees
     test_native_shortcut_targets_compose_existing_flows
     test_fedora_dependency_bootstrap_installs_rpmbuild

@@ -8,7 +8,6 @@ const { spawnSync } = require("node:child_process");
 const test = require("node:test");
 
 const { evaluateUpstreamDmg } = require("../lib/upstream-dmg-acceptance.js");
-const { UPSTREAM_DMG_RELEASE_PROFILE } = require("../lib/upstream-dmg-release-profile.js");
 
 function withFixture(fn) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "upstream-acceptance-"));
@@ -32,16 +31,6 @@ function requiredCoreReport() {
   };
 }
 
-function remoteReport() {
-  const requirements = UPSTREAM_DMG_RELEASE_PROFILE.featureChecks[0].requirements;
-  const names = new Set([...requirements.requiredAppliedPatches, ...requirements.requiredSuccessfulPatches]);
-  const core = requiredCoreReport();
-  return {
-    enabledFeatures: ["remote-mobile-control", "ui-tweaks"],
-    patches: [...core.patches, ...names].map((entry) => typeof entry === "string" ? patch(entry) : entry),
-  };
-}
-
 function writeJson(root, name, value) {
   const filePath = path.join(root, name);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -51,13 +40,10 @@ function writeJson(root, name, value) {
 
 function evaluate(root, dmg, overrides = {}) {
   const core = writeJson(root, "core.json", overrides.core ?? requiredCoreReport());
-  const remote = writeJson(root, "remote.json", overrides.remote ?? remoteReport());
   return evaluateUpstreamDmg({
     dmgPath: dmg,
     coreReportPath: overrides.corePath ?? core,
-    featureReportPath: overrides.remotePath ?? remote,
     buildStatus: overrides.buildStatus ?? "success",
-    featureInspectStatus: overrides.featureInspectStatus ?? "success",
     repoRoot: root,
   });
 }
@@ -86,24 +72,43 @@ test("rejects required patch and post-patch integrity failures", () => withFixtu
   assert.ok(decision.blockers.some((item) => item.code === "post-patch-integrity"));
 }));
 
-test("rejects a missing required remote-mobile contract entry", () => withFixture(({ root, dmg }) => {
-  const remote = remoteReport();
-  remote.patches = remote.patches.filter((entry) => entry.name !== "feature:ui-tweaks:sidebar-project-name-style");
-  const decision = evaluate(root, dmg, { remote });
+test("rejects drift from a user-enabled feature", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.enabledFeatures = ["ui-tweaks"];
+  core.patches.push(patch("feature:ui-tweaks:model-picker", {
+    status: "skipped-optional",
+    ciPolicy: "optional",
+    sourceKind: "feature",
+    featureId: "ui-tweaks",
+    reason: "needle moved",
+  }));
+  const decision = evaluate(root, dmg, { core });
   assert.equal(decision.verdict, "rejected");
-  assert.ok(decision.blockers.some((item) => item.check === "drift-sensitive-features"));
+  assert.ok(decision.blockers.some((item) => item.code === "enabled-feature-drift"));
+}));
+
+test("does not probe or block a disabled feature", () => withFixture(({ root, dmg }) => {
+  const core = requiredCoreReport();
+  core.enabledFeatures = [];
+  core.patches.push(patch("feature:ui-tweaks:model-picker", {
+    status: "skipped-disabled",
+    ciPolicy: "optional",
+    sourceKind: "feature",
+    featureId: "ui-tweaks",
+  }));
+  const decision = evaluate(root, dmg, { core });
+  assert.equal(decision.verdict, "accepted");
+  assert.equal(decision.blockers.length, 0);
 }));
 
 test("the local and GitHub CLI surfaces use the same verdict", () => withFixture(({ root, dmg }) => {
   const core = writeJson(root, "cli-core.json", requiredCoreReport());
-  const remote = writeJson(root, "cli-remote.json", remoteReport());
   const cli = path.join(__dirname, "../validate-upstream-dmg.js");
   const verdicts = [];
   for (const source of ["local", "github-actions"]) {
     const output = path.join(root, `${source}.json`);
     const result = spawnSync(process.execPath, [
-      cli, "--dmg", dmg, "--core-report", core, "--feature-report", remote,
-      "--build-status", "success", "--feature-inspect-status", "success",
+      cli, "--dmg", dmg, "--core-report", core, "--build-status", "success",
       "--output", output, "--source", source, "--repo-root", root,
     ], { encoding: "utf8" });
     assert.equal(result.status, 0, result.stderr);
@@ -112,12 +117,10 @@ test("the local and GitHub CLI surfaces use the same verdict", () => withFixture
   assert.deepEqual(verdicts, ["accepted", "accepted"]);
 }));
 
-test("marks unstructured build failures and missing reports inconclusive", () => withFixture(({ root, dmg }) => {
+test("marks unstructured build failures and a missing core report inconclusive", () => withFixture(({ root, dmg }) => {
   const decision = evaluate(root, dmg, {
     buildStatus: "failure",
     corePath: path.join(root, "missing-core.json"),
-    remotePath: path.join(root, "missing-remote.json"),
-    featureInspectStatus: "failure",
   });
   assert.equal(decision.verdict, "inconclusive");
   assert.ok(decision.inconclusiveReasons.length >= 2);
@@ -126,13 +129,10 @@ test("marks unstructured build failures and missing reports inconclusive", () =>
 test("marks malformed reports inconclusive instead of throwing", () => withFixture(({ root, dmg }) => {
   const malformed = path.join(root, "malformed.json");
   fs.writeFileSync(malformed, "{not-json");
-  const remote = writeJson(root, "valid-remote.json", remoteReport());
   const decision = evaluateUpstreamDmg({
     dmgPath: dmg,
     coreReportPath: malformed,
-    featureReportPath: remote,
     buildStatus: "success",
-    featureInspectStatus: "success",
     repoRoot: root,
   });
   assert.equal(decision.verdict, "inconclusive");
@@ -145,8 +145,6 @@ test("a structured rejection wins over incomplete checks", () => withFixture(({ 
   const decision = evaluate(root, dmg, {
     core,
     buildStatus: "failure",
-    remotePath: path.join(root, "missing-remote.json"),
-    featureInspectStatus: "failure",
   });
   assert.equal(decision.verdict, "rejected");
 }));

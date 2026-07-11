@@ -139,6 +139,10 @@ fresh upstream `Codex.dmg`, builds the native package, and installs it. The
 rebuild uses the shared [upstream DMG acceptance profile](upstream-dmg-acceptance.md);
 rejected and inconclusive candidates never replace the working generated app
 or advance to package installation.
+The rebuild evaluates only the Linux Features selected in the user's saved
+configuration. Drift in any selected feature rejects the candidate; disable
+that feature and retry if receiving the upstream update is more important than
+retaining it.
 
 Updater downloads are streamed to unique temporary files and published as
 `Codex-<sha256>.dmg` only after the file and parent directory are synced. The

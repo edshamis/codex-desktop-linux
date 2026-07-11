@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const { sourceInfoFromGit } = require("./build-info.js");
-const { optionalDriftFromReport } = require("./patch-report.js");
+const { enabledFeatureFailuresFromReport, optionalDriftFromReport } = require("./patch-report.js");
 const { readPatchReport, validatePatchReport } = require("./patch-validation.js");
 const { UPSTREAM_DMG_RELEASE_PROFILE } = require("./upstream-dmg-release-profile.js");
 
@@ -70,14 +70,16 @@ function validationBlockers(check, failures) {
   });
 }
 
-function driftWarnings(check, report) {
-  return optionalDriftFromReport(report).map((warning) => ({
+function driftWarnings(check, report, excludedNames = new Set()) {
+  return optionalDriftFromReport(report)
+    .filter((warning) => !excludedNames.has(warning.name))
+    .map((warning) => ({
     code: "optional-patch-drift",
     check,
     name: warning.name,
     status: warning.status,
     reason: warning.reason ?? null,
-  }));
+    }));
 }
 
 function httpIdentity(metadata) {
@@ -127,36 +129,31 @@ function evaluateUpstreamDmg(options) {
     inputErrors.push(`invalid build metadata: ${error instanceof Error ? error.message : String(error)}`);
   }
   const core = readReportResult(options.coreReportPath);
-  const remoteProfile = profile.featureChecks[0];
-  const remote = readReportResult(options.featureReportPath);
   const blockers = [];
   const warnings = [];
   const inconclusiveReasons = [...inputErrors];
 
   if (core.report) {
+    const enabledFeatureFailures = profile.rejectEnabledFeatureDrift
+      ? enabledFeatureFailuresFromReport(core.report)
+      : [];
+    const enabledFeatureFailureNames = new Set(enabledFeatureFailures.map((failure) => failure.name));
     blockers.push(...validationBlockers("core", validatePatchReport(core.report, profile.corePatchProfile)));
     blockers.push(...integrityFailures(core.report));
-    warnings.push(...driftWarnings("core", core.report));
+    blockers.push(...enabledFeatureFailures.map((failure) => ({
+      code: "enabled-feature-drift",
+      check: `feature:${failure.featureId}`,
+      name: failure.name,
+      status: failure.status,
+      reason: failure.reason ?? `Enabled feature ${failure.featureId} did not apply cleanly`,
+    })));
+    warnings.push(...driftWarnings("core", core.report, enabledFeatureFailureNames));
   } else {
     inconclusiveReasons.push(core.error);
   }
 
-  if (remoteProfile && remote.report) {
-    blockers.push(...validationBlockers(
-      remoteProfile.id,
-      validatePatchReport(remote.report, profile.corePatchProfile, remoteProfile.requirements),
-    ));
-    blockers.push(...integrityFailures(remote.report).map((failure) => ({ ...failure, check: remoteProfile.id })));
-    warnings.push(...driftWarnings(remoteProfile.id, remote.report));
-  } else if (remoteProfile) {
-    inconclusiveReasons.push(remote.error);
-  }
-
   if (options.buildStatus !== "success") {
     inconclusiveReasons.push(`candidate build status: ${options.buildStatus ?? "unknown"}`);
-  }
-  if (options.featureInspectStatus !== "success") {
-    inconclusiveReasons.push(`remote-mobile inspect status: ${options.featureInspectStatus ?? "unknown"}`);
   }
 
   const dmg = buildDmgInfo({ dmgPath: options.dmgPath, metadata, buildInfo });
@@ -181,10 +178,10 @@ function evaluateUpstreamDmg(options) {
     source,
     checks: {
       build: { status: options.buildStatus ?? "unknown" },
-      core: { status: core.report ? "completed" : "missing", reportPath: options.coreReportPath ?? null },
-      featureProbe: {
-        status: remote.report ? (options.featureInspectStatus ?? "unknown") : "missing",
-        reportPath: options.featureReportPath ?? null,
+      patchReport: {
+        status: core.report ? "completed" : "missing",
+        reportPath: options.coreReportPath ?? null,
+        enabledFeatures: Array.isArray(core.report?.enabledFeatures) ? core.report.enabledFeatures : [],
       },
     },
     blockers,

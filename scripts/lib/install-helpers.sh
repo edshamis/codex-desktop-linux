@@ -190,7 +190,7 @@ prepare_install() {
 # ---- Check dependencies ----
 check_deps() {
     local missing=()
-    for cmd in python3 curl unzip tar; do
+    for cmd in python3 curl unzip tar flock; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if ! command -v 7zz &>/dev/null && ! command -v 7z &>/dev/null; then

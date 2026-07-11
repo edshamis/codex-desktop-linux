@@ -22,7 +22,7 @@
 | Renderer crashes in containers with a tiny `/dev/shm` | The launcher keeps `--disable-dev-shm-usage` automatically when `/dev/shm` is missing or below 1 GiB; force it with `CODEX_ELECTRON_DISABLE_DEV_SHM_USAGE=1` |
 | Screen reader does not read the app UI | Renderer accessibility is forced automatically when Orca, brltty, the GNOME screen-reader setting, AT-SPI accessibility state (`org.a11y.Status IsEnabled` or `toolkit-accessibility`, e.g. after `codex-computer-use-linux setup`), or accessibility env markers are detected; force it with `CODEX_FORCE_RENDERER_ACCESSIBILITY=1` |
 | Stale install / cached DMG | `make build-app-fresh` refreshes the cached DMG and builds a clean candidate; the working app remains until acceptance succeeds |
-| `Candidate was not installed (verdict: rejected)` | Open `dist-next/rebuild/upstream-dmg-decision.json` and its referenced patch reports; fix required current-DMG drift before retrying |
+| `Candidate was not installed (verdict: rejected)` | Open `dist-next/rebuild/upstream-dmg-decision.json`. If the blocker is `enabled-feature-drift`, disable the named Linux Feature and retry; otherwise fix required current-DMG drift before retrying |
 | `Candidate was not installed (verdict: inconclusive)` | Check the build/inspect logs and missing report paths in `upstream-dmg-decision.json`; infrastructure failures intentionally preserve the working app |
 | Computer Use plugin invisible in UI | Enable the Computer Use UI opt-in; upstream server/account rollout can still hide some controls |
 | Computer Use `doctor` reports no input backend | Grant `/dev/uinput`, enable XDG RemoteDesktop portal, or start `ydotoold` / `ydotool.service` |

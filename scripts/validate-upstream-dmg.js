@@ -7,13 +7,12 @@ const path = require("node:path");
 const { decisionMarkdown, evaluateUpstreamDmg } = require("./lib/upstream-dmg-acceptance.js");
 
 function usage() {
-  return `Usage: scripts/validate-upstream-dmg.js --dmg PATH --core-report PATH --feature-report PATH [options]
+  return `Usage: scripts/validate-upstream-dmg.js --dmg PATH --core-report PATH [options]
 
 Options:
   --build-info PATH
   --metadata PATH
   --build-status success|failure
-  --feature-inspect-status success|failure
   --output PATH
   --summary PATH
   --source local|github-actions
@@ -25,12 +24,12 @@ Options:
 }
 
 function parseArgs(argv) {
-  const args = { buildStatus: "unknown", featureInspectStatus: "unknown", source: "local" };
+  const args = { buildStatus: "unknown", source: "local" };
   const valueOptions = new Map([
     ["--dmg", "dmgPath"], ["--core-report", "coreReportPath"],
-    ["--feature-report", "featureReportPath"], ["--build-info", "buildInfoPath"],
+    ["--build-info", "buildInfoPath"],
     ["--metadata", "metadataPath"], ["--build-status", "buildStatus"],
-    ["--feature-inspect-status", "featureInspectStatus"], ["--output", "outputPath"],
+    ["--output", "outputPath"],
     ["--summary", "summaryPath"], ["--source", "source"], ["--run-id", "runId"],
     ["--run-attempt", "runAttempt"], ["--run-url", "runUrl"], ["--repo-root", "repoRoot"],
   ]);
@@ -57,7 +56,7 @@ function main(argv = process.argv.slice(2)) {
     process.stdout.write(usage());
     return 0;
   }
-  if (!args.dmgPath || !args.coreReportPath || !args.featureReportPath || !args.outputPath) {
+  if (!args.dmgPath || !args.coreReportPath || !args.outputPath) {
     throw new Error(usage());
   }
   const decision = evaluateUpstreamDmg(args);

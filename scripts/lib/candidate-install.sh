@@ -27,10 +27,18 @@ promote_candidate_install() {
     local candidate_dir="$1"
     local final_dir="$2"
     local backup=""
+    local lock_file
+    local promotion_lock_fd
     local previous_install_dir="${INSTALL_DIR:-}"
 
     [ -d "$candidate_dir" ] || error "Candidate app was not created: $candidate_dir"
     assert_distinct_candidate_paths "$candidate_dir" "$final_dir"
+
+    lock_file="$(dirname "$final_dir")/.$(basename "$final_dir").promotion.lock"
+    exec {promotion_lock_fd}>"$lock_file"
+    if ! flock -w "${CODEX_PROMOTION_LOCK_TIMEOUT_SECONDS:-60}" "$promotion_lock_fd"; then
+        error "Timed out waiting to promote an accepted candidate: $final_dir"
+    fi
 
     # The long build is allowed while the app runs. Only the short atomic
     # promotion window requires the installed executable to be stopped.
@@ -50,9 +58,13 @@ promote_candidate_install() {
         if [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$final_dir" ]; then
             mv "$backup" "$final_dir" || error "Could not restore backup after failed promotion: $backup"
         fi
+        flock -u "$promotion_lock_fd"
+        exec {promotion_lock_fd}>&-
         return 1
     fi
 
     PROMOTED_BACKUP_APP_DIR="$backup"
     export PROMOTED_BACKUP_APP_DIR
+    flock -u "$promotion_lock_fd"
+    exec {promotion_lock_fd}>&-
 }

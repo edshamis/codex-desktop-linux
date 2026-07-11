@@ -121,9 +121,10 @@ Primary human docs: [architecture](docs/architecture.md),
   and the same format-specific command layer as normal installs.
 - Local installs, updater rebuilds, and scheduled CI use the same upstream DMG
   acceptance profile. Build into a sibling candidate and promote it only after
-  an `accepted` or `accepted_with_warnings` verdict; optional drift remains
-  fail-soft and rejected/inconclusive candidates must not replace the working
-  app.
+  an `accepted` or `accepted_with_warnings` verdict. Only user-enabled Linux
+  features participate in local/updater acceptance, and drift in any enabled
+  feature rejects the candidate. Disabled features are not probed. Rejected or
+  inconclusive candidates must not replace the working app.
 
 ## Generated Artifacts
 
@@ -159,7 +160,7 @@ Side-by-side rebuild candidate: `./scripts/rebuild-candidate.sh` or
 
 ## Runtime Expectations
 
-- `python3`, `7z`, `curl`, `unzip`, `tar`, `make`, and `g++` are required for
+- `python3`, `7z`, `curl`, `unzip`, `tar`, `flock`, `make`, and `g++` are required for
   `install.sh`.
 - Native package builders require their format-specific tools: `dpkg-deb`,
   `rpmbuild`, `makepkg`/pacman tooling, or `appimagetool`.
@@ -197,7 +198,9 @@ for broad cross-format confidence.
   when adding or removing shared payload files.
 - Keep new core patch descriptors fail-soft and idempotent unless there is a
   deliberate `required-upstream` CI policy.
-- Keep optional feature patches optional in CI and disabled by default.
+- Keep optional features disabled by default. When a user enables one, its
+  patch drift must block candidate promotion until the user disables it or the
+  feature is repaired for the current DMG.
 - Add tests near the behavior being changed: patcher tests for ASAR needles,
   feature tests for Linux features, Rust tests for updater/MCP backends, and
   package smoke checks for payload/layout changes.

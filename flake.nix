@@ -460,6 +460,7 @@ PY
             pkgs.patchelf
             pkgs.python3
             pkgs.unzip
+            pkgs.util-linux
           ];
 
           dontConfigure = true;

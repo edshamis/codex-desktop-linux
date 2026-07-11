@@ -10,8 +10,6 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
-      - linux-features/remote-mobile-control/**
-      - linux-features/ui-tweaks/**
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js
@@ -29,8 +27,6 @@ on:
       - scripts/patch-linux-window-ui.js
       - scripts/patch-linux-window-ui.test.js
       - scripts/patches/**
-      - linux-features/remote-mobile-control/**
-      - linux-features/ui-tweaks/**
       - scripts/ci/validate-patch-report.js
       - scripts/ci/upstream-dmg-*.js
       - scripts/validate-upstream-dmg.js

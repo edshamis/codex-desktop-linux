@@ -10,21 +10,25 @@ is the only component that decides whether the candidate can be promoted.
 | Verdict | Meaning | Local promotion | Scheduled issue |
 |---|---|---:|---:|
 | `accepted` | Build and every required release check passed | yes | close obsolete drift issues |
-| `accepted_with_warnings` | Only optional fail-soft patches drifted | yes | close obsolete drift issues |
-| `rejected` | A required core/feature/integrity contract failed | no | create or update the current fingerprint issue |
+| `accepted_with_warnings` | Only fail-soft core diagnostics drifted | yes | close obsolete drift issues |
+| `rejected` | A required core/integrity check or an enabled Linux Feature drifted | no | create or update the current fingerprint issue |
 | `inconclusive` | Reports are missing or an infrastructure failure prevented a decision | no | no change |
 
-The profile derives required core patches from patch descriptors. Its explicit
-feature probe enables `remote-mobile-control` and `ui-tweaks`; these requirements
-live in the profile rather than in workflow YAML.
+The profile derives required core patches from patch descriptors and reads the
+enabled feature set from the candidate's patch report. It never enables a
+feature for diagnostics. Disabled features are not checked; any patch drift in
+a user-enabled feature rejects the candidate so the working installation keeps
+that feature intact. The user can disable the feature and retry the update.
 
 ## Transactional Local Install
 
-`install.sh` builds into a hidden sibling candidate directory. It then runs the
-feature probe and writes `dist-next/rebuild/upstream-dmg-decision.json`. The
-existing app is moved only after an accepted verdict, immediately before the
-candidate is renamed into place. A failed rename restores the timestamped
-backup.
+`install.sh` builds into a hidden sibling candidate directory. It evaluates the
+candidate patch report and writes
+`dist-next/rebuild/upstream-dmg-decision.json`. The existing app is moved only
+after an accepted verdict, immediately before the candidate is renamed into
+place. A failed rename restores the timestamped backup. Each build evaluates
+reports from its own transaction directory, and a per-target promotion lock
+serializes the short final replacement window.
 
 `--fresh` refreshes the DMG and candidate without deleting the working app
 early. Set `CODEX_KEEP_REJECTED_CANDIDATE=1` to retain a rejected candidate for

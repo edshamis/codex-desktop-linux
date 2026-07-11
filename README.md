@@ -309,6 +309,8 @@ make build-app DMG=/path/to/Codex.dmg
 Local builds are transactional: the candidate must pass the same
 [upstream DMG acceptance profile](docs/upstream-dmg-acceptance.md) used by the
 scheduled GitHub workflow before it replaces the working `codex-app/`.
+Only configured Linux Features are checked; drift in an enabled feature keeps
+the current app installed until that feature is disabled or repaired.
 
 Build and install a package:
 
