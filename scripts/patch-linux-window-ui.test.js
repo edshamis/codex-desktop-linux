@@ -171,6 +171,7 @@ const {
   applyLinuxFastModeModelGuardPatch,
   applyLinuxI18nGatePatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxSkillsListDedupePatch,
@@ -965,6 +966,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-x11-project-picker",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
+    "linux-quick-chat-window-zoom",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
     "linux-thread-side-panel-native-tooltip",
@@ -2635,6 +2637,215 @@ test("adds a right-side safe area for Linux window controls in application menu 
     patched,
     /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
   );
+});
+
+test("applies window zoom to the popped-out Quick Chat viewport", () => {
+  const source =
+    "c0={zoomedViewport:a0,floatingSurface:o0};st=vC(`flex flex-col overflow-hidden text-token-foreground`,c===`floating`&&vC(c0.floatingSurface,`fixed top-0 left-0`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`)";
+
+  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
+
+  assert.match(
+    patched,
+    /c===`window`&&vC\(c0\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/,
+  );
+  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+  assert.doesNotMatch(patched, /data-codex-linux-quick-chat-zoom/);
+});
+
+test("applies window zoom to every popped-out Quick Chat root", () => {
+  const root =
+    "c===`floating`&&vC(c0.floatingSurface,`fixed top-0 left-0`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`";
+  const source = `c0={zoomedViewport:a0,floatingSurface:o0};first=${root};second=${root}`;
+
+  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
+
+  assert.equal(
+    (patched.match(/c===`window`&&vC\(c0\.zoomedViewport/g) ?? []).length,
+    2,
+  );
+  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+});
+
+test("patches an unpatched Quick Chat root beside an already patched root", () => {
+  const source = [
+    "c0={zoomedViewport:a0,floatingSurface:o0}",
+    "first=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&vC(c0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+    "second=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+
+  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
+
+  assert.equal(
+    (patched.match(/c===`window`&&vC\(c0\.zoomedViewport/g) ?? []).length,
+    2,
+  );
+  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+});
+
+test("does not mistake an unrelated zoomed viewport for a patched Quick Chat root", () => {
+  const source = [
+    "unrelated=x===`window`&&classes(s0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+    "c0={zoomedViewport:a0,floatingSurface:o0}",
+    "quick=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+
+  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
+
+  assert.match(
+    patched,
+    /quick=c===`floating`[^;]+c===`window`&&vC\(c0\.zoomedViewport/,
+  );
+  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+});
+
+test("reports a missing Quick Chat zoom style contract", () => {
+  const source = [
+    "unrelated=vC(c0.zoomedViewport,`relative`)",
+    "st=vC(`base`,c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`)",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => applyLinuxQuickChatWindowZoomPatch(source));
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("does not match a zoom contract on an identifier suffix", () => {
+  const source = [
+    "ba={zoomedViewport:a0,floatingSurface:o0}",
+    "quick=c===`floating`&&vC(a.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("does not use a distant unrelated zoom contract for a patchable root", () => {
+  const source = [
+    "unrelated=c0={zoomedViewport:a0,floatingSurface:o0}",
+    ";".repeat(24_001),
+    "quick=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("validates the zoom contract for an already patched Quick Chat root", () => {
+  const source = [
+    "unrelated=c0={zoomedViewport:a0,floatingSurface:o0}",
+    ";".repeat(24_001),
+    "quick=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&vC(c0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("leaves every Quick Chat root unchanged when one zoom contract is missing", () => {
+  const source = [
+    "c0={zoomedViewport:a0,floatingSurface:o0}",
+    "first=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+    "second=d===`floating`&&wC(d0.floatingSurface,`fixed`),d===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+  let patched;
+
+  const { warnings } = captureWarns(() => {
+    patched = applyLinuxQuickChatWindowZoomPatch(source);
+  });
+
+  assert.equal(patched, source);
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("reports an unpatchable Quick Chat root beside an already patched root", () => {
+  const source = [
+    "first=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&vC(c0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+    "second=d===`floating`&&wC(d0.floatingSurface,`fixed`),d===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("leaves a patchable Quick Chat root unchanged beside a drifted root", () => {
+  const source = [
+    "c0={zoomedViewport:a0,floatingSurface:o0}",
+    "d0={zoomedViewport:b0,floatingSurface:p0}",
+    "first=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`",
+    "second=d===`floating`&&wC(d0.floatingSurface,`fixed`),d===`window`&&wC(d0.zoomedViewport,`drifted-window-root`)",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("reports a drifted Quick Chat root beside an already patched root", () => {
+  const source = [
+    "first=c===`floating`&&vC(c0.floatingSurface,`fixed`),c===`window`&&vC(c0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+    "second=d===`floating`&&wC(d0.floatingSurface,`fixed`),d===`window`&&wC(d0.zoomedViewport,`drifted-window-root`)",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("reports Quick Chat drift beside an unrelated patched-looking viewport", () => {
+  const source = [
+    "unrelated=x===`window`&&classes(s0.zoomedViewport,`relative overflow-hidden bg-token-editor-background/55`)",
+    "quick=c===`floating`?classes(c0.floatingSurface,`fixed`):c===`window`?`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`:null",
+  ].join(";");
+
+  const { warnings } = captureWarns(() => {
+    assert.equal(applyLinuxQuickChatWindowZoomPatch(source), source);
+  });
+
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
+});
+
+test("reports popped-out Quick Chat zoom patch drift", () => {
+  const source =
+    "st=classes(`base`,c===`floating`?classes(c0.floatingSurface,`fixed`):c===`window`?`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`:null)";
+
+  const { warnings } = captureWarns(() => applyLinuxQuickChatWindowZoomPatch(source));
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+  ]);
 });
 
 test("patches remaining Linux window controls safe areas when another copy is already patched", () => {
