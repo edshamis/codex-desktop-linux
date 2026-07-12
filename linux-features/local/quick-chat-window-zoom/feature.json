@@ -1,0 +1,9 @@
+{
+  "id": "quick-chat-window-zoom",
+  "title": "Quick Chat Window Zoom",
+  "description": "Apply the app zoom level to the popped-out Quick Chat viewport.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}
