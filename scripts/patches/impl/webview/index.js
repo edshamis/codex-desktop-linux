@@ -161,6 +161,37 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxQuickChatWindowZoomPatch(currentSource) {
+  const marker = "data-codex-linux-quick-chat-zoom";
+  if (currentSource.includes(marker)) {
+    return currentSource;
+  }
+
+  const quickChatWindowPattern =
+    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{canPopOut:!1,session:([A-Za-z_$][\w$]*),variant:`window`,onAddToComposer:([A-Za-z_$][\w$]*),onClose:([A-Za-z_$][\w$]*)\}\)/u;
+  const match = currentSource.match(quickChatWindowPattern);
+  if (match != null) {
+    const [, jsxAlias, componentAlias, sessionAlias, addToComposerAlias, closeAlias] = match;
+    const quickChatWindow =
+      `(0,${jsxAlias}.jsx)(${componentAlias},{canPopOut:!1,session:${sessionAlias},variant:\`window\`,onAddToComposer:${addToComposerAlias},onClose:${closeAlias}})`;
+    return currentSource.replace(
+      quickChatWindowPattern,
+      `(0,${jsxAlias}.jsx)(\`div\`,{\"${marker}\":!0,style:{height:\`calc(100vh / var(--codex-window-zoom))\`,width:\`calc(100vw / var(--codex-window-zoom))\`,zoom:\`var(--codex-window-zoom)\`},children:${quickChatWindow}})`,
+    );
+  }
+
+  if (
+    currentSource.includes("quickChatWindow?.rendererReady") &&
+    currentSource.includes("variant:`window`")
+  ) {
+    console.warn(
+      "WARN: Could not find popped-out Quick Chat zoom wrapper insertion point — skipping Quick Chat zoom patch",
+    );
+  }
+
+  return currentSource;
+}
+
 function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
   const currentPadding = `padding:{top:${LINUX_TOOLTIP_COLLISION_PADDING_TOP},right:8,bottom:8,left:8}`;
   const defaultMiddleware = "middleware:[a({mainAxis:C,crossAxis:t}),c({padding:8}),l({padding:8}),u({padding:8,apply({availableWidth:e,availableHeight:t,elements:n,rects:r})";
@@ -1822,6 +1853,7 @@ module.exports = {
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
+  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxFastModeModelGuardPatch,

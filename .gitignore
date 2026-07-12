@@ -17,6 +17,7 @@ linux-features/local/
 .idea/
 .claude/
 .codex/
+.scratchpads/
 
 # graphify
 graphify-out/

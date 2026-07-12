@@ -171,6 +171,7 @@ const {
   applyLinuxFastModeModelGuardPatch,
   applyLinuxI18nGatePatch,
   applyLinuxOpaqueWindowsDefaultPatch,
+  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxSkillsListDedupePatch,
@@ -965,6 +966,7 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-x11-project-picker",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
+    "linux-quick-chat-window-zoom",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
     "linux-thread-side-panel-native-tooltip",
@@ -2635,6 +2637,32 @@ test("adds a right-side safe area for Linux window controls in application menu 
     patched,
     /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
   );
+});
+
+test("applies window zoom to the popped-out Quick Chat viewport", () => {
+  const source =
+    "function T(){d.quickChatWindow?.rendererReady(n??null);return(0,k.jsx)(C,{canPopOut:!1,session:f,variant:`window`,onAddToComposer:E,onClose:_})}";
+
+  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
+
+  assert.match(patched, /\"data-codex-linux-quick-chat-zoom\":!0/);
+  assert.match(patched, /height:`calc\(100vh \/ var\(--codex-window-zoom\)\)`/);
+  assert.match(patched, /width:`calc\(100vw \/ var\(--codex-window-zoom\)\)`/);
+  assert.match(patched, /zoom:`var\(--codex-window-zoom\)`/);
+  assert.match(
+    patched,
+    /children:\(0,k\.jsx\)\(C,\{canPopOut:!1,session:f,variant:`window`,onAddToComposer:E,onClose:_\}\)/,
+  );
+});
+
+test("reports popped-out Quick Chat zoom patch drift", () => {
+  const source =
+    "function T(){d.quickChatWindow?.rendererReady(n??null);return render(C,{canPopOut:!1,session:f,variant:`window`})}";
+
+  const { warnings } = captureWarns(() => applyLinuxQuickChatWindowZoomPatch(source));
+  assert.deepEqual(warnings, [
+    "WARN: Could not find popped-out Quick Chat zoom wrapper insertion point — skipping Quick Chat zoom patch",
+  ]);
 });
 
 test("patches remaining Linux window controls safe areas when another copy is already patched", () => {
