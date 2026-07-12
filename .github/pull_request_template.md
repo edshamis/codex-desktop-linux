@@ -1,3 +1,5 @@
+**IMPORTANT: Please keep only one pull request open at a time. A maximum of two active pull requests from the same contributor is allowed only in exceptional circumstances. Do not open several pull requests at once; finish or close existing work before submitting more.**
+
 <!-- Complete this template before requesting review or merge. -->
 
 ## Summary
