@@ -1,3 +1,47 @@
+codex_capture_original_ld_library_path() {
+    # Packaged runtimes may extend LD_LIBRARY_PATH after this point. Main-process
+    # host children use this three-state snapshot instead of inheriting those paths.
+    # HOST is populated later from the login shell; inherited values are stale or
+    # user-controlled internal state and must never override this fresh snapshot.
+    unset CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE
+    if [ "${LD_LIBRARY_PATH+x}" != x ]; then
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="unset"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE=""
+    elif [ -z "$LD_LIBRARY_PATH" ]; then
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="empty"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE=""
+    else
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE="value"
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE="$LD_LIBRARY_PATH"
+    fi
+    export CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE
+}
+
+codex_restore_original_ld_library_path() {
+    local state="${CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE:-}"
+    local value="${CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE:-}"
+
+    unset CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE
+    unset CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE
+    case "$state" in
+        unset) unset LD_LIBRARY_PATH ;;
+        empty) export LD_LIBRARY_PATH="" ;;
+        value) export LD_LIBRARY_PATH="$value" ;;
+    esac
+}
+
+codex_exec_host_command() {
+    codex_restore_original_ld_library_path
+    exec "$@"
+}
+
+codex_run_host_command() (
+    codex_exec_host_command "$@"
+)
+
+# Capture before package-specific launcher patches add application runtime paths.
+codex_capture_original_ld_library_path
+
 resolve_script_dir() {
     local source="${BASH_SOURCE[0]}"
     local dir
@@ -636,7 +680,7 @@ run_feature_prelaunch_hooks() {
         CODEX_LINUX_LAUNCHER_CMD="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}" \
         CODEX_LINUX_FEATURE_HOOK_PHASE="prelaunch" \
         CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
-            "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
+            codex_run_host_command "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
     done
 }
 
@@ -1270,7 +1314,7 @@ run_cold_start_hooks() {
             CODEX_LINUX_LAUNCHER_CMD="${CODEX_LINUX_LAUNCHER_CMD:-$SCRIPT_DIR/start.sh}" \
             CODEX_LINUX_FEATURE_HOOK_PHASE="cold-start" \
             CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
-            "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
+            codex_run_host_command "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR"
         ) >>"$LOG_FILE" 2>&1 &
     done
 }
@@ -1295,7 +1339,7 @@ run_feature_after_exit_hooks() {
         CODEX_LINUX_FEATURE_HOOK_PHASE="after-exit" \
         CODEX_LINUX_ELECTRON_EXIT_STATUS="$electron_status" \
         CODEX_UPDATE_MANAGER_PATH="${CODEX_UPDATE_MANAGER_PATH:-}" \
-            "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR" "$electron_status"
+            codex_run_host_command "$hook" "$SCRIPT_DIR" "$APP_STATE_DIR" "$LOG_DIR" "$electron_status"
         hook_status=$?
         set -e
         if [ "$hook_status" -ne 0 ]; then
@@ -1544,7 +1588,7 @@ codex_cli_version_probe() {
     rm -f "$marker"
     ( trap - EXIT
       { exec 9>&-; } 2>/dev/null || true
-      exec "$@" >"$output_file" 2>/dev/null
+      codex_exec_host_command "$@" >"$output_file" 2>/dev/null
     ) &
     probe_pid="$!"
     # The watchdog (and its sleep child, which outlives the kill below) must
@@ -1641,7 +1685,7 @@ notify_error() {
     icon="$(resolve_notification_icon)"
     echo "$message"
     if command -v notify-send >/dev/null 2>&1; then
-        notify-send \
+        codex_run_host_command notify-send \
             -a "$CODEX_LINUX_APP_DISPLAY_NAME" \
             -i "$icon" \
             -h "string:desktop-entry:$CODEX_LINUX_APP_ID" \
@@ -1696,7 +1740,7 @@ export_feature_runtime_env() {
 
 run_update_manager() {
     resolve_update_manager_path || return 127
-    "$CODEX_UPDATE_MANAGER_PATH" "$@"
+    codex_run_host_command "$CODEX_UPDATE_MANAGER_PATH" "$@"
 }
 
 pid_is_current_user() {
@@ -3318,7 +3362,7 @@ run_feature_launcher_hooks() {
             CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR" \
             CODEX_LINUX_LAUNCHER_LOG="$LOG_FILE" \
             CODEX_LINUX_FEATURE_HOOK_PHASE=launcher \
-            "$hook" "${ELECTRON_ARGS[@]}"
+            codex_run_host_command "$hook" "${ELECTRON_ARGS[@]}"
         )"; then
             :
         else

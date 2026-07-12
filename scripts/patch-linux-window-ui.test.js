@@ -87,16 +87,19 @@ const {
   applyLinuxWillQuitDrainTimeoutPatch,
 } = require("./patches/impl/main-process/quit-lifecycle.js");
 const {
+  applyLinuxHostProcessEnvironmentPatch,
   applyLinuxFileManagerPatch,
   applyLinuxGitOriginsSourceFallbackPatch,
   applyLinuxLocalAppServerFeatureEnablementHandlerPatch,
   applyLinuxOwlFeatureBindingFallbackPatch,
   applyLinuxRemoteControlConfigPreservationPatch,
+  applyLinuxTerminalHostEnvironmentPatch,
   applyLinuxTerminalUserPathPatch,
   applyLinuxWorkerFileManagerPatch,
   applyLinuxXdgDocumentsDirPatch,
   applyLinuxX11ProjectPickerPatch,
   patchLinuxOwlFeatureBindingFallbackAssets,
+  patchLinuxHostProcessEnvironmentTargets,
 } = require("./patches/impl/main-process/misc.js");
 const {
   applyLinuxHotkeyWindowPrewarmPatch,
@@ -1013,6 +1016,8 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-browser-use-external-availability",
     "linux-chat-search-hydration",
     "linux-file-manager",
+    "linux-host-child-process-environment",
+    "linux-terminal-host-environment",
     "linux-worker-file-manager",
     "linux-terminal-user-path",
     "linux-tray",
@@ -1085,6 +1090,15 @@ test("default core patch descriptors are grouped and unique", () => {
   );
   assert.equal(
     descriptors.find((descriptor) => descriptor.id === "local-environment-action-modal-draft")?.ciPolicy,
+    "optional",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-host-child-process-environment")
+      ?.ciPolicy,
+    "optional",
+  );
+  assert.equal(
+    descriptors.find((descriptor) => descriptor.id === "linux-terminal-host-environment")?.ciPolicy,
     "optional",
   );
   assert.equal(
@@ -1939,6 +1953,145 @@ test("adds Linux file manager support to the worker open target registry", () =>
   assert.match(patched, /import\(`electron`\)\)\.shell\.openPath\(t\)/);
 });
 
+function evaluatePatchedHostProcessEnvironment(env) {
+  const source =
+    '"use strict";const shellError=`Failed to load shell env`,cliError=`Unable to locate the Codex CLI binary`;async function ky(){let a=new AbortController,s=await n.rr({interactive:!0,extraEnv:{[n.ir]:`1`},signal:a.signal}).then(e=>({status:`loaded`,userEnv:e}));if(s.status===`loaded`)return Object.assign(process.env,s.userEnv),s}function cB(e){let r={...process.env,LOG_FORMAT:`json`,RUST_LOG:process.env.RUST_LOG??`warn`,CODEX_INTERNAL_ORIGINATOR_OVERRIDE:e.defaultOriginator??`Codex Desktop`},a=`next`;return{executablePath:`codex`,args:[`app-server`],env:t.t(r),a}}';
+  const patched = applyPatchTwice(applyLinuxHostProcessEnvironmentPatch, source);
+  const context = {
+    AbortController: class {
+      signal = {};
+    },
+    process: { platform: "linux", env: { ...env } },
+    n: {
+      ir: "CODEX_SHELL",
+      rr: async ({ extraEnv }) =>
+        context.shellUserEnv ??
+        Object.fromEntries(
+          Object.entries({ ...context.process.env, ...extraEnv }).filter(([, value]) => value !== undefined),
+        ),
+    },
+    t: { t: (value) => value },
+  };
+  vm.runInNewContext(
+    `${patched};globalThis.hostConfig=cB({});globalThis.createHostConfig=cB;globalThis.loadShell=ky`,
+    context,
+  );
+  return { context, patched };
+}
+
+test("restores inherited library paths only at known Linux host-process boundaries", async () => {
+  const { context, patched } = evaluatePatchedHostProcessEnvironment({
+    PATH: "/usr/bin",
+    LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "unset",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "",
+  });
+
+  assert.match(patched, /codexLinuxHostProcessEnv/);
+  assert.doesNotMatch(patched, /PatchChildProcessEnvironment/);
+  assert.doesNotMatch(patched, /require\(`node:child_process`\)/);
+  assert.equal(Object.hasOwn(context.hostConfig.env, "LD_LIBRARY_PATH"), false);
+
+  const shellResult = await context.loadShell();
+  assert.equal(Object.hasOwn(shellResult.userEnv, "LD_LIBRARY_PATH"), false);
+  assert.equal(context.process.env.CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE, "unset");
+  assert.equal(
+    context.process.env.LD_LIBRARY_PATH,
+    "/nix/app:/nix/runtime",
+    "loading the user shell must not discard Electron's packaged runtime path",
+  );
+});
+
+test("preserves empty and non-empty user LD_LIBRARY_PATH values for inherited host environments", () => {
+  for (const [state, value] of [
+    ["empty", ""],
+    ["value", "/home/user/lib:/opt/vendor/lib"],
+  ]) {
+    const { context } = evaluatePatchedHostProcessEnvironment({
+      LD_LIBRARY_PATH: `/nix/app:${value}`,
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: state,
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: value,
+    });
+    assert.equal(context.hostConfig.env.LD_LIBRARY_PATH, value);
+  }
+});
+
+test("preserves a user LD_LIBRARY_PATH discovered by the login shell", async () => {
+  const { context } = evaluatePatchedHostProcessEnvironment({
+    LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "unset",
+    CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "",
+  });
+  context.shellUserEnv = {
+    PATH: "/home/user/bin:/usr/bin",
+    LD_LIBRARY_PATH: "/home/user/profile-lib",
+  };
+
+  await context.loadShell();
+
+  assert.equal(
+    context.process.env.LD_LIBRARY_PATH,
+    "/nix/app:/nix/runtime",
+    "shell discovery must leave the packaged Electron runtime intact",
+  );
+  assert.equal(context.process.env.CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE, "value");
+  assert.equal(
+    context.process.env.CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE,
+    "/home/user/profile-lib",
+  );
+  assert.equal(context.createHostConfig({}).env.LD_LIBRARY_PATH, "/home/user/profile-lib");
+});
+
+test("preserves development shell and CLI environments without launcher snapshot markers", async () => {
+  const { context } = evaluatePatchedHostProcessEnvironment({
+    LD_LIBRARY_PATH: "/developer/lib",
+    CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE: "unset",
+    CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE: "/stale/host/lib",
+  });
+  assert.equal(context.hostConfig.env.LD_LIBRARY_PATH, "/developer/lib");
+  assert.equal(
+    Object.hasOwn(context.hostConfig.env, "CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE"),
+    false,
+  );
+  const shellResult = await context.loadShell();
+  assert.equal(shellResult.userEnv.LD_LIBRARY_PATH, "/developer/lib");
+  assert.equal(
+    Object.hasOwn(shellResult.userEnv, "CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE"),
+    false,
+  );
+  assert.equal(context.process.env.LD_LIBRARY_PATH, "/developer/lib");
+});
+
+test("patches startup shell and Codex CLI environments in separate Vite bundles", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-host-env-bundles-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(buildDir, "main-current.js"),
+      '"use strict";const shellError=`Failed to load shell env`;async function ky(){let a=new AbortController,s=await n.rr({interactive:!0,extraEnv:{[n.ir]:`1`},signal:a.signal}).then(e=>({status:`loaded`,userEnv:e}));if(s.status===`loaded`)return Object.assign(process.env,s.userEnv),s}',
+    );
+    fs.writeFileSync(
+      path.join(buildDir, "src-current.js"),
+      '"use strict";const cliError=`Unable to locate the Codex CLI binary`;function cB(e){let r={...process.env,LOG_FORMAT:`json`,RUST_LOG:process.env.RUST_LOG??`warn`,CODEX_INTERNAL_ORIGINATOR_OVERRIDE:e.defaultOriginator??`Codex Desktop`},a=`next`;return{env:t.t(r),a}}',
+    );
+
+    const result = patchLinuxHostProcessEnvironmentTargets(tempRoot);
+    const mainSource = fs.readFileSync(path.join(buildDir, "main-current.js"), "utf8");
+    const sharedSource = fs.readFileSync(path.join(buildDir, "src-current.js"), "utf8");
+    assert.deepEqual(result, { matched: 2, changed: 2 });
+    assert.match(mainSource, /extraEnv:codexLinuxLoginShellExtraEnv/);
+    assert.match(mainSource, /codexLinuxShellEnvResult/);
+    assert.match(sharedSource, /let r=codexLinuxHostProcessEnv\(\{\.\.\.process\.env/);
+    assert.deepEqual(patchLinuxHostProcessEnvironmentTargets(tempRoot), {
+      matched: 2,
+      changed: 0,
+    });
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("restores the user PATH for Linux local terminal sessions", () => {
   const source = `${mainBundlePrefix}${terminalEnvBundle}`;
 
@@ -1994,6 +2147,56 @@ test("rejects the obsolete 26.623 terminal sanitizer shape", () => {
 
   assert.equal(patched, source);
   assert.doesNotMatch(patched, /function codexLinuxRestoreUserTerminalPath/);
+});
+
+test("sanitizes the terminal base before applying worktree environment overrides", async () => {
+  const patched = applyPatchTwice(
+    applyLinuxTerminalHostEnvironmentPatch,
+    terminalEnvBundle,
+  );
+  const context = {
+    process: {
+      platform: "linux",
+      env: {
+        PATH: "/usr/bin",
+        LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: "unset",
+        CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: "",
+      },
+    },
+  };
+  vm.runInNewContext(`${patched};globalThis.Backend=Backend`, context);
+  const backend = new context.Backend();
+  backend.getWorktreeShellEnvironmentForCwd = async () => ({
+    exclude: [],
+    set: { LD_LIBRARY_PATH: "/project/lib", PROJECT_ONLY: "1" },
+  });
+
+  const terminalEnv = await backend.buildTerminalEnv("/worktree", null, { type: "local" });
+
+  assert.equal(terminalEnv.LD_LIBRARY_PATH, "/project/lib");
+  assert.equal(terminalEnv.PROJECT_ONLY, "1");
+  assert.equal(Object.hasOwn(terminalEnv, "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE"), false);
+
+  backend.getWorktreeShellEnvironmentForCwd = async () => ({ exclude: [], set: {} });
+  for (const [state, value] of [
+    ["empty", ""],
+    ["value", "/home/user/lib"],
+  ]) {
+    context.process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE = state;
+    context.process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE = value;
+    const inheritedEnv = await backend.buildTerminalEnv("/worktree", null, { type: "local" });
+    assert.equal(inheritedEnv.LD_LIBRARY_PATH, value);
+  }
+
+  delete context.process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE;
+  delete context.process.env.CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE;
+  context.process.env.CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE = "unset";
+  context.process.env.CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE = "/stale/host/lib";
+  context.process.env.LD_LIBRARY_PATH = "/developer/lib";
+  const developmentEnv = await backend.buildTerminalEnv("/worktree", null, { type: "local" });
+  assert.equal(developmentEnv.LD_LIBRARY_PATH, "/developer/lib");
+  assert.equal(Object.hasOwn(developmentEnv, "CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE"), false);
 });
 
 test("patchExtractedApp patches worker file manager support", () => {
@@ -5823,6 +6026,7 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /function codexLinuxReadUpdateState\(\)/);
   assert.match(patched, /function codexLinuxUpdateLifecycleState\(e\)/);
   assert.match(patched, /function codexLinuxUpdateManagerPath\(\)/);
+  assert.match(patched, /function codexLinuxUpdateManagerEnv\(\)/);
   assert.match(patched, /async function codexLinuxShowUpdateMessage\(codexLinuxMessage,codexLinuxDetail\)/);
   assert.match(patched, /function codexLinuxInstallAfterQuit\(\)/);
   assert.match(patched, /function codexLinuxQuitForUpdate\(\)/);
@@ -5834,10 +6038,12 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.match(patched, /grep -q "\^status: Installed"/);
   assert.match(patched, /\/usr\/bin\/codex-desktop >\/dev\/null 2>&1 &/);
   assert.match(patched, /detached:!0,stdio:`ignore`/);
+  assert.match(patched, /windowsHide:!0,env:codexLinuxUpdateManagerEnv\(\)/);
   assert.match(patched, /codexLinuxInstallAfterQuit\(\);let t=codexLinuxGetElectronModule\(\);if\(!t\)return;let e=setTimeout/);
   assert.match(patched, /t\.app\?\.quit\?\.\(\)/);
   assert.match(patched, /t\.app\?\.exit\?\.\(0\)/);
   assert.match(patched, /execFile\(codexLinuxUpdateManagerPath\(\),e/);
+  assert.match(patched, /encoding:`utf8`,windowsHide:!0,env:codexLinuxUpdateManagerEnv\(\)/);
   assert.match(patched, /async function codexLinuxProbeUpdateManager\(\)/);
   assert.match(patched, /codexLinuxRunUpdateManager\(\[`--help`\]\)/);
   assert.match(patched, /async function codexLinuxRefreshUpdateState\(\)/);
@@ -5855,6 +6061,41 @@ test("adds Linux package updater behind the existing app updater manager", () =>
   assert.doesNotMatch(patched, /this\.options\.onInstallUpdatesRequested\?\.\(\)/);
   assert.match(patched, /n\.stdout\?\.includes\(`already installed`\)\?await codexLinuxShowUpdateMessage/);
   assert.match(patched, /if\(t\?\.status===`waiting_for_app_exit`\)/);
+});
+
+test("restores host LD_LIBRARY_PATH for Electron updater bridge commands", () => {
+  const patched = applyLinuxAppUpdaterBridgePatch(appUpdaterBundleFixture());
+  const helperSource = patched.match(
+    /function codexLinuxUpdateManagerEnv\(\)\{[\s\S]*?return e\}/,
+  )?.[0];
+  assert.ok(helperSource);
+
+  const runHelper = (env) => {
+    const context = { process: { env: { ...env } } };
+    vm.runInNewContext(`${helperSource};globalThis.result=codexLinuxUpdateManagerEnv()`, context);
+    return context.result;
+  };
+
+  for (const [state, value, expected] of [
+    ["unset", "", undefined],
+    ["empty", "", ""],
+    ["value", "/home/user/lib", "/home/user/lib"],
+  ]) {
+    const result = runHelper({
+      LD_LIBRARY_PATH: "/nix/app:/nix/runtime",
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE: state,
+      CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE: value,
+    });
+    assert.equal(result.LD_LIBRARY_PATH, expected);
+    assert.equal(Object.hasOwn(result, "CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE"), false);
+  }
+
+  const developmentResult = runHelper({
+    LD_LIBRARY_PATH: "/developer/lib",
+    CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE: "unset",
+  });
+  assert.equal(developmentResult.LD_LIBRARY_PATH, "/developer/lib");
+  assert.equal(Object.hasOwn(developmentResult, "CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE"), false);
 });
 
 test("migrates updater helpers away from captured Electron aliases", () => {

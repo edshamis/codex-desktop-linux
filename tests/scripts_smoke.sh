@@ -4441,6 +4441,50 @@ EOF
     "$BASH_BIN" "$probe" || fail "Expected managed Node PATH setup to tolerate an unset PATH"
 }
 
+test_launcher_captures_original_ld_library_path_state() {
+    info "Checking launcher LD_LIBRARY_PATH snapshot semantics"
+    local probe="$TMP_DIR/launcher-ld-library-path-probe.sh"
+
+    awk '
+        /^codex_capture_original_ld_library_path\(\) \{/ { capture = 1 }
+        capture { print }
+        capture && /^# Capture before package-specific launcher patches/ { exit }
+    ' "$REPO_DIR/launcher/start.sh.template" > "$probe"
+    cat >> "$probe" <<'EOF'
+CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE=value
+CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE=/stale/host/lib
+unset LD_LIBRARY_PATH
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = unset ] || exit 2
+[ -z "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" ] || exit 3
+[ "${CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE+x}" != x ] || exit 8
+[ "${CODEX_LINUX_HOST_LD_LIBRARY_PATH_VALUE+x}" != x ] || exit 9
+LD_LIBRARY_PATH=/nix/app
+export LD_LIBRARY_PATH
+codex_run_host_command "$BASH" -c '
+    [ "${LD_LIBRARY_PATH+x}" != x ] &&
+    [ "${CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE+x}" != x ] &&
+    [ "${CODEX_LINUX_HOST_LD_LIBRARY_PATH_STATE+x}" != x ]
+' || exit 10
+
+LD_LIBRARY_PATH=""
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = empty ] || exit 4
+[ -z "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" ] || exit 5
+LD_LIBRARY_PATH=/nix/app
+codex_run_host_command "$BASH" -c '[ "${LD_LIBRARY_PATH+x}" = x ] && [ -z "$LD_LIBRARY_PATH" ]' || exit 11
+
+LD_LIBRARY_PATH="/home/user/lib:/opt/vendor/lib"
+codex_capture_original_ld_library_path
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_STATE" = value ] || exit 6
+[ "$CODEX_LINUX_ORIGINAL_LD_LIBRARY_PATH_VALUE" = "/home/user/lib:/opt/vendor/lib" ] || exit 7
+LD_LIBRARY_PATH=/nix/app
+codex_run_host_command "$BASH" -c '[ "$LD_LIBRARY_PATH" = "/home/user/lib:/opt/vendor/lib" ]' || exit 12
+EOF
+
+    "$BASH_BIN" "$probe" || fail "Expected launcher to preserve all LD_LIBRARY_PATH states"
+}
+
 test_packaged_runtime_keeps_managed_node_out_of_user_service_path() {
     info "Checking packaged runtime exports the user PATH to user services"
     local workspace="$TMP_DIR/packaged-runtime-user-path"
@@ -4800,6 +4844,9 @@ test_launcher_marketplace_metadata_atomic_staging() (
 
 test_launcher_template_sanity() {
     info "Checking launcher template markers"
+    assert_contains "$REPO_DIR/launcher/start.sh.template" "codex_capture_original_ld_library_path"
+    assert_contains "$REPO_DIR/flake.nix" 'export LD_LIBRARY_PATH="${electronLibPath}:${runtimeLibPath}'
+    assert_not_contains "$REPO_DIR/flake.nix" '--prefix LD_LIBRARY_PATH'
     assert_contains "$REPO_DIR/install.sh" 'DEFAULT_CODEX_WEBVIEW_PORT=5175'
     assert_contains "$REPO_DIR/install.sh" "inspect_rebuild_candidate"
     assert_contains "$REPO_DIR/scripts/lib/install-helpers.sh" "--inspect"
@@ -4879,6 +4926,10 @@ send_body = source.split("send_warm_start_launch_action() {", 1)[1].split("webvi
 prelaunch_hooks_body = source.split("run_feature_prelaunch_hooks() {", 1)[1].split("bundled_plugin_version() {", 1)[0]
 launcher_hooks_body = source.split("run_feature_launcher_hooks() {", 1)[1].split("build_electron_launch_args() {", 1)[0]
 cold_start_hooks_body = source.split("run_cold_start_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
+after_exit_hooks_body = source.split("run_feature_after_exit_hooks() {", 1)[1].split("run_cli_preflight() {", 1)[0]
+cli_probe_body = source.split("codex_cli_version_probe() {", 1)[1].split("codex_cli_version() {", 1)[0]
+notify_body = source.split("notify_error() {", 1)[1].split("canonical_path() {", 1)[0]
+update_manager_body = source.split("run_update_manager() {", 1)[1].split("pid_is_current_user() {", 1)[0]
 stop_body = source.split("stop_owned_webview_server() {", 1)[1].split("owned_webview_server_pid() {", 1)[0]
 stale_body = source.split("pid_is_stale_webview_server() {", 1)[1].split("stop_owned_webview_server() {", 1)[0]
 multi_body = source.split("configure_multi_launch_instance() {", 1)[1].split('WEBVIEW_ORIGIN="http://127.0.0.1:$CODEX_LINUX_WEBVIEW_PORT"', 1)[0]
@@ -5051,6 +5102,16 @@ for name, body in (("prelaunch", prelaunch_hooks_body), ("cold-start", cold_star
         raise SystemExit(f"launcher {name} hooks must receive resolved CODEX_HOME")
     if 'CODEX_LINUX_FEATURES_DIR="$CODEX_LINUX_FEATURES_DIR"' not in body:
         raise SystemExit(f"launcher {name} hooks must receive the app-local Linux feature resource directory")
+    if 'codex_run_host_command "$hook"' not in body:
+        raise SystemExit(f"launcher {name} hooks must not inherit packaged LD_LIBRARY_PATH")
+if 'codex_run_host_command "$hook"' not in after_exit_hooks_body:
+    raise SystemExit("launcher after-exit hooks must not inherit packaged LD_LIBRARY_PATH")
+if 'codex_exec_host_command "$@"' not in cli_probe_body:
+    raise SystemExit("launcher CLI version probes must not inherit packaged LD_LIBRARY_PATH")
+if 'codex_run_host_command notify-send' not in notify_body:
+    raise SystemExit("desktop notifications must not inherit packaged LD_LIBRARY_PATH")
+if 'codex_run_host_command "$CODEX_UPDATE_MANAGER_PATH" "$@"' not in update_manager_body:
+    raise SystemExit("update manager and its host children must not inherit packaged LD_LIBRARY_PATH")
 if 'CODEX_LINUX_FEATURE_HOOK_PHASE=launcher' not in launcher_hooks_body:
     raise SystemExit("launcher hooks must receive their hook phase")
 if '"$hook" "${ELECTRON_ARGS[@]}"' not in launcher_hooks_body:
@@ -5169,6 +5230,10 @@ import sys
 
 source_path, output_path = sys.argv[1:3]
 source = open(source_path, encoding="utf-8").read()
+host_command_helpers = source[
+    source.index("codex_restore_original_ld_library_path() {"):
+    source.index("# Capture before package-specific launcher patches")
+]
 start = source.index("is_wsl_environment() {")
 end = source.index("configure_side_by_side_app_env() {")
 helpers = source[start:end].replace(
@@ -5176,7 +5241,7 @@ helpers = source[start:end].replace(
     "launcher_is_wsl_environment() {",
     1,
 )
-probe = "#!/usr/bin/env bash\n" + helpers + r'''
+probe = "#!/usr/bin/env bash\n" + host_command_helpers + helpers + r'''
 set -Eeuo pipefail
 
 is_wsl_environment() {
@@ -5786,7 +5851,10 @@ import re
 import sys
 
 source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-functions = []
+functions = [source[
+    source.index("codex_restore_original_ld_library_path() {"):
+    source.index("# Capture before package-specific launcher patches")
+]]
 for name in ("find_codex_cli", "pid_parent_matches", "codex_cli_version_probe", "codex_cli_version", "log_codex_cli_path"):
     match = re.search(r"^" + re.escape(name) + r"\(\) \{[\s\S]*?^\}\n", source, re.M)
     if match is None:
@@ -9026,6 +9094,7 @@ main() {
     test_chrome_marketplace_fallback_synthesis
     test_chrome_native_host_manifest_writer
     test_launcher_managed_node_handles_unset_path
+    test_launcher_captures_original_ld_library_path_state
     test_packaged_runtime_keeps_managed_node_out_of_user_service_path
     test_launcher_extra_bundled_plugin_cache_rollback
     test_launcher_extra_bundled_plugin_cache_concurrent_destination
