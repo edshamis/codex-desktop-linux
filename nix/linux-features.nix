@@ -9,6 +9,7 @@ let
     "open-target-discovery"
     "persistent-status-panel"
     "pet-overlay"
+    "quick-chat-window-zoom"
     "remote-mobile-control"
   ];
 

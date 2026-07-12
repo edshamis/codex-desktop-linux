@@ -13,7 +13,9 @@ required Linux compatibility behavior.
 Add `quick-chat-window-zoom` to `linux-features/features.json`, or pass the id
 through the Nix `linuxFeatureIds` option. This checkout force-tracks the
 otherwise ignored local feature so the pinned CI builder and update-builder can
-reproduce it.
+reproduce it. The private fork also allowlists this id in
+`nix/linux-features.nix`, because the upstream Nix interface intentionally
+rejects feature ids it does not know.
 
 ## Test
 
