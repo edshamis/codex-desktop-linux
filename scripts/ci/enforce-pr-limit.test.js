@@ -10,6 +10,8 @@ const {
   buildLimitComment,
   enforcePullRequestLimit,
   parseMaxOpenPullRequests,
+  parsePullRequestLimitOverrides,
+  resolvePullRequestLimit,
   shouldClosePullRequest,
 } = require("./enforce-pr-limit");
 
@@ -66,10 +68,89 @@ test("parseMaxOpenPullRequests falls back for missing and invalid values", () =>
   }
 });
 
+test("parsePullRequestLimitOverrides accepts an empty object and normalizes usernames", () => {
+  assert.deepEqual([...parsePullRequestLimitOverrides("{}").entries()], []);
+  assert.deepEqual(
+    [...parsePullRequestLimitOverrides('{"One-PR-User":1,"trusted-user":4}').entries()],
+    [
+      ["one-pr-user", 1],
+      ["trusted-user", 4],
+    ],
+  );
+});
+
+test("parsePullRequestLimitOverrides ignores malformed JSON", () => {
+  const warnings = [];
+  const overrides = parsePullRequestLimitOverrides("{broken", (message) => warnings.push(message));
+
+  assert.deepEqual([...overrides.entries()], []);
+  assert.equal(warnings.length, 1);
+});
+
+test("parsePullRequestLimitOverrides keeps valid entries and rejects invalid entries", () => {
+  const warnings = [];
+  const overrides = parsePullRequestLimitOverrides(
+    JSON.stringify({
+      valid: 3,
+      zero: 0,
+      negative: -1,
+      fractional: 1.5,
+      string: "2",
+      "@invalid": 1,
+      DUPLICATE: 2,
+      duplicate: 4,
+    }),
+    (message) => warnings.push(message),
+  );
+
+  assert.deepEqual([...overrides.entries()], [
+    ["valid", 3],
+    ["duplicate", 2],
+  ]);
+  assert.equal(warnings.length, 6);
+});
+
+test("resolvePullRequestLimit prefers a case-insensitive personal override", () => {
+  assert.deepEqual(
+    resolvePullRequestLimit({
+      author: "ONE-PR-USER",
+      rawLimit: "2",
+      rawOverrides: '{"one-pr-user":1}',
+    }),
+    { limit: 1, source: "personal override" },
+  );
+});
+
+test("resolvePullRequestLimit uses the global limit or built-in fallback", () => {
+  assert.deepEqual(
+    resolvePullRequestLimit({ author: "unknown", rawLimit: "4", rawOverrides: '{"other":1}' }),
+    { limit: 4, source: "global variable" },
+  );
+
+  const warnings = [];
+  assert.deepEqual(
+    resolvePullRequestLimit({
+      author: "unknown",
+      rawLimit: "",
+      rawOverrides: "{}",
+      warn: (message) => warnings.push(message),
+    }),
+    { limit: 2, source: "fallback" },
+  );
+  assert.equal(warnings.length, 1);
+});
+
 test("buildLimitComment returns the required English comment", () => {
   assert.equal(
     buildLimitComment(2, 3),
     "Thanks for contributing. This repository allows a maximum of **2 active pull requests per contributor**. You currently have **3 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.",
+  );
+});
+
+test("buildLimitComment uses correct singular English grammar", () => {
+  assert.equal(
+    buildLimitComment(1, 2),
+    "Thanks for contributing. This repository allows a maximum of **1 active pull request per contributor**. You currently have **2 open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.",
   );
 });
 
@@ -168,6 +249,39 @@ test("enforcePullRequestLimit comments in English before closing the excess PR",
   });
 });
 
+test("enforcePullRequestLimit closes against a lower personal limit", async () => {
+  const current = pullRequest(2, "One-PR-User");
+  const harness = createHarness({ current, open: [pullRequest(1, "one-pr-user"), current] });
+
+  const result = await enforcePullRequestLimit({
+    ...harness,
+    rawLimit: "2",
+    rawOverrides: '{"one-pr-user":1}',
+  });
+
+  assert.deepEqual(result, { action: "closed", count: 2, limit: 1 });
+  assert.match(harness.messages.info[0], /limit is 1 \(personal override\)/);
+  assert.equal(harness.calls[1][1].body, buildLimitComment(1, 2));
+});
+
+test("enforcePullRequestLimit allows more PRs under a higher personal limit", async () => {
+  const current = pullRequest(3, "trusted-user");
+  const harness = createHarness({
+    current,
+    open: [pullRequest(1, "trusted-user"), pullRequest(2, "trusted-user"), current],
+  });
+
+  const result = await enforcePullRequestLimit({
+    ...harness,
+    rawLimit: "2",
+    rawOverrides: '{"trusted-user":3}',
+  });
+
+  assert.deepEqual(result, { action: "allowed", count: 3, limit: 3 });
+  assert.match(harness.messages.info[0], /limit is 3 \(personal override\)/);
+  assert.equal(harness.calls.length, 1);
+});
+
 test("enforcePullRequestLimit leaves an already-closed current PR unchanged on rerun", async () => {
   const current = pullRequest(3);
   const harness = createHarness({ current, open: [pullRequest(1), pullRequest(2)] });
@@ -191,7 +305,11 @@ test("workflow uses the trusted pull_request_target configuration", () => {
   assert.match(workflow, /persist-credentials: false/);
   assert.match(
     workflow,
-    /MAX_OPEN_PRS_PER_CONTRIBUTOR: \$\{\{ vars\.MAX_OPEN_PRS_PER_CONTRIBUTOR \|\| '2' \}\}/,
+    /MAX_OPEN_PRS_PER_CONTRIBUTOR: \$\{\{ vars\.MAX_OPEN_PRS_PER_CONTRIBUTOR \}\}/,
+  );
+  assert.match(
+    workflow,
+    /MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES: \$\{\{ vars\.MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES \}\}/,
   );
   assert.doesNotMatch(workflow, /github\.event\.pull_request\.head/);
 });

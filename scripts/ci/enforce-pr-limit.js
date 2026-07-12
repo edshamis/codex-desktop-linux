@@ -2,7 +2,7 @@
 
 const DEFAULT_MAX_OPEN_PRS = 2;
 
-function parseMaxOpenPullRequests(rawValue, warn = () => {}) {
+function parsePositiveInteger(rawValue) {
   const value = typeof rawValue === "string" ? rawValue.trim() : "";
 
   if (/^[1-9]\d*$/.test(value)) {
@@ -12,14 +12,82 @@ function parseMaxOpenPullRequests(rawValue, warn = () => {}) {
     }
   }
 
+  return null;
+}
+
+function parseMaxOpenPullRequests(rawValue, warn = () => {}) {
+  const parsed = parsePositiveInteger(rawValue);
+  if (parsed !== null) {
+    return parsed;
+  }
+
   warn(
     `MAX_OPEN_PRS_PER_CONTRIBUTOR must be a positive integer; using ${DEFAULT_MAX_OPEN_PRS}.`,
   );
   return DEFAULT_MAX_OPEN_PRS;
 }
 
+function parsePullRequestLimitOverrides(rawValue, warn = () => {}) {
+  const value = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (value === "") {
+    return new Map();
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    warn(`MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES is not valid JSON; ignoring all overrides.`);
+    return new Map();
+  }
+
+  if (parsed === null || Array.isArray(parsed) || typeof parsed !== "object") {
+    warn(`MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES must be a JSON object; ignoring all overrides.`);
+    return new Map();
+  }
+
+  const overrides = new Map();
+  for (const [username, configuredLimit] of Object.entries(parsed)) {
+    const normalizedUsername = username.toLowerCase();
+    const validUsername = /^[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(username);
+    const validLimit = Number.isSafeInteger(configuredLimit) && configuredLimit >= 1;
+
+    if (!validUsername || !validLimit) {
+      warn(`Ignoring invalid pull request limit override for ${JSON.stringify(username)}.`);
+      continue;
+    }
+
+    if (overrides.has(normalizedUsername)) {
+      warn(`Ignoring duplicate pull request limit override for ${JSON.stringify(username)}.`);
+      continue;
+    }
+
+    overrides.set(normalizedUsername, configuredLimit);
+  }
+
+  return overrides;
+}
+
+function resolvePullRequestLimit({ author, rawLimit, rawOverrides, warn = () => {} }) {
+  const configuredGlobalLimit = parsePositiveInteger(rawLimit);
+  const globalLimit = parseMaxOpenPullRequests(rawLimit, warn);
+  const overrides = parsePullRequestLimitOverrides(rawOverrides, warn);
+  const override = overrides.get(author.toLowerCase());
+
+  if (override !== undefined) {
+    return { limit: override, source: "personal override" };
+  }
+
+  return {
+    limit: globalLimit,
+    source: configuredGlobalLimit === null ? "fallback" : "global variable",
+  };
+}
+
 function buildLimitComment(limit, count) {
-  return `Thanks for contributing. This repository allows a maximum of **${limit} active pull requests per contributor**. You currently have **${count} open pull requests**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.`;
+  const activePullRequests = `${limit} active pull request${limit === 1 ? "" : "s"} per contributor`;
+  const openPullRequests = `${count} open pull request${count === 1 ? "" : "s"}`;
+  return `Thanks for contributing. This repository allows a maximum of **${activePullRequests}**. You currently have **${openPullRequests}**, so this pull request is being closed automatically. Please finish or close one of your existing pull requests before opening another.`;
 }
 
 function shouldClosePullRequest({ action, currentNumber, limit, openPullRequests }) {
@@ -39,7 +107,7 @@ function shouldClosePullRequest({ action, currentNumber, limit, openPullRequests
   return !retainedNumbers.includes(currentNumber);
 }
 
-async function enforcePullRequestLimit({ context, core, github, rawLimit }) {
+async function enforcePullRequestLimit({ context, core, github, rawLimit, rawOverrides }) {
   const pullRequest = context.payload.pull_request;
   if (!pullRequest) {
     throw new Error("The workflow event does not contain a pull request.");
@@ -50,8 +118,15 @@ async function enforcePullRequestLimit({ context, core, github, rawLimit }) {
     return { action: "skipped-bot" };
   }
 
-  const limit = parseMaxOpenPullRequests(rawLimit, (message) => core.warning(message));
   const author = pullRequest.user.login;
+  const resolvedLimit = resolvePullRequestLimit({
+    author,
+    rawLimit,
+    rawOverrides,
+    warn: (message) => core.warning(message),
+  });
+  const { limit } = resolvedLimit;
+  core.info(`${author}: effective pull request limit is ${limit} (${resolvedLimit.source}).`);
   const authorLogin = author.toLowerCase();
   const allOpenPullRequests = await github.paginate(github.rest.pulls.list, {
     ...context.repo,
@@ -104,5 +179,7 @@ module.exports = {
   buildLimitComment,
   enforcePullRequestLimit,
   parseMaxOpenPullRequests,
+  parsePullRequestLimitOverrides,
+  resolvePullRequestLimit,
   shouldClosePullRequest,
 };

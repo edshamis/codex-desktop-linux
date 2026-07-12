@@ -26,7 +26,8 @@ jobs:
       - name: Enforce open pull request limit
         uses: actions/github-script@v7
         env:
-          MAX_OPEN_PRS_PER_CONTRIBUTOR: ${{ vars.MAX_OPEN_PRS_PER_CONTRIBUTOR || '2' }}
+          MAX_OPEN_PRS_PER_CONTRIBUTOR: ${{ vars.MAX_OPEN_PRS_PER_CONTRIBUTOR }}
+          MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES: ${{ vars.MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES }}
         with:
           script: |
             const { enforcePullRequestLimit } = require('./scripts/ci/enforce-pr-limit.js');
@@ -35,4 +36,5 @@ jobs:
               core,
               github,
               rawLimit: process.env.MAX_OPEN_PRS_PER_CONTRIBUTOR,
+              rawOverrides: process.env.MAX_OPEN_PRS_PER_CONTRIBUTOR_OVERRIDES,
             });
