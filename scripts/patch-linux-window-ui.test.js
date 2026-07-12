@@ -171,7 +171,6 @@ const {
   applyLinuxFastModeModelGuardPatch,
   applyLinuxI18nGatePatch,
   applyLinuxOpaqueWindowsDefaultPatch,
-  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxSkillsListDedupePatch,
@@ -966,7 +965,6 @@ test("default core patch descriptors are grouped and unique", () => {
     "linux-x11-project-picker",
     "opaque-window-default-general-settings",
     "opaque-window-default-webview-index",
-    "linux-quick-chat-window-zoom",
     "linux-window-controls-safe-area",
     "linux-tooltip-window-controls-collision",
     "linux-thread-side-panel-native-tooltip",
@@ -2637,30 +2635,6 @@ test("adds a right-side safe area for Linux window controls in application menu 
     patched,
     /applicationMenu:Object\.freeze\(\{left:0,right:0\}\)/,
   );
-});
-
-test("applies window zoom to the popped-out Quick Chat viewport", () => {
-  const source =
-    "st=vC(`flex flex-col overflow-hidden text-token-foreground`,c===`floating`&&vC(c0.floatingSurface,`fixed top-0 left-0`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`)";
-
-  const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
-
-  assert.match(
-    patched,
-    /c===`window`&&vC\(c0\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/,
-  );
-  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
-  assert.doesNotMatch(patched, /data-codex-linux-quick-chat-zoom/);
-});
-
-test("reports popped-out Quick Chat zoom patch drift", () => {
-  const source =
-    "st=classes(`base`,c===`floating`?classes(c0.floatingSurface,`fixed`):c===`window`?`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`:null)";
-
-  const { warnings } = captureWarns(() => applyLinuxQuickChatWindowZoomPatch(source));
-  assert.deepEqual(warnings, [
-    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
-  ]);
 });
 
 test("patches remaining Linux window controls safe areas when another copy is already patched", () => {

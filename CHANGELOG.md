@@ -43,9 +43,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The opt-in `frameless-titlebar` feature now removes Electron-drawn window
   controls from Quick Chat as well as the primary window, keeping compositor-
   managed decoration behavior consistent across both window types.
-- Popped-out Quick Chat roots now consume the shared window zoom value, so Zoom
-  In, Zoom Out, and Actual Size scale content while preserving conversation
-  scrolling instead of updating only hidden state and titlebar geometry.
 - Remote mobile cold starts now select one runtime owner deterministically.
   Explicit systemd user-service configuration takes precedence over the
   Desktop app-server and standalone fallback, while a versioned Desktop marker

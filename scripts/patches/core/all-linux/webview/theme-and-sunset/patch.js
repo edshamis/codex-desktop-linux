@@ -6,7 +6,6 @@ const {
 const {
   applyLinuxAppSunsetPatch,
   applyLinuxOpaqueWindowsDefaultPatch,
-  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
@@ -42,16 +41,6 @@ module.exports = [
     missingDescription: "webview index bundle",
     skipDescription: "translucent sidebar default patch",
     apply: applyLinuxOpaqueWindowsDefaultPatch,
-  }),
-  webviewAssetPatch({
-    id: "linux-quick-chat-window-zoom",
-    phase: "webview-asset",
-    order: 1030,
-    ciPolicy: "optional",
-    pattern: /^app-initial~app-main~page-.*\.js$/,
-    missingDescription: "shared Quick Chat component bundle",
-    skipDescription: "popped-out Quick Chat zoom root patch",
-    apply: applyLinuxQuickChatWindowZoomPatch,
   }),
   webviewAssetPatch({
     id: "linux-window-controls-safe-area",

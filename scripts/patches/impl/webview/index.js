@@ -161,36 +161,6 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   return currentSource;
 }
 
-function applyLinuxQuickChatWindowZoomPatch(currentSource) {
-  const patchedWindowPattern =
-    /[A-Za-z_$][\w$]*===`window`&&[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/u;
-  if (patchedWindowPattern.test(currentSource)) {
-    return currentSource;
-  }
-
-  const quickChatWindowRootPattern =
-    /(([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),)\2===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background\/55`/u;
-  const match = currentSource.match(quickChatWindowRootPattern);
-  if (match != null) {
-    const [, floatingRoot, variantAlias, classNamesAlias, stylesAlias] = match;
-    return currentSource.replace(
-      quickChatWindowRootPattern,
-      `${floatingRoot}${variantAlias}===\`window\`&&${classNamesAlias}(${stylesAlias}.zoomedViewport,\`relative overflow-hidden bg-token-editor-background/55\`)`,
-    );
-  }
-
-  if (
-    currentSource.includes(".floatingSurface") &&
-    currentSource.includes("relative h-dvh w-full overflow-hidden bg-token-editor-background/55")
-  ) {
-    console.warn(
-      "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
-    );
-  }
-
-  return currentSource;
-}
-
 function applyLinuxTooltipWindowControlsCollisionPatch(currentSource) {
   const currentPadding = `padding:{top:${LINUX_TOOLTIP_COLLISION_PADDING_TOP},right:8,bottom:8,left:8}`;
   const defaultMiddleware = "middleware:[a({mainAxis:C,crossAxis:t}),c({padding:8}),l({padding:8}),u({padding:8,apply({availableWidth:e,availableHeight:t,elements:n,rects:r})";
@@ -1852,7 +1822,6 @@ module.exports = {
   applyLinuxThreadSidePanelNativeTooltipPatch,
   applyLinuxTooltipWindowControlsCollisionPatch,
   applyLinuxWindowControlsSafeAreaPatch,
-  applyLinuxQuickChatWindowZoomPatch,
   applyLinuxSafeMonospaceFontStackPatch,
   applyLinuxSettingsSearchVisibilityPatch,
   applyLinuxFastModeModelGuardPatch,
