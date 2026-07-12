@@ -162,30 +162,29 @@ function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
 }
 
 function applyLinuxQuickChatWindowZoomPatch(currentSource) {
-  const marker = "data-codex-linux-quick-chat-zoom";
-  if (currentSource.includes(marker)) {
+  const patchedWindowPattern =
+    /[A-Za-z_$][\w$]*===`window`&&[A-Za-z_$][\w$]*\([A-Za-z_$][\w$]*\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/u;
+  if (patchedWindowPattern.test(currentSource)) {
     return currentSource;
   }
 
-  const quickChatWindowPattern =
-    /\(0,([A-Za-z_$][\w$]*)\.jsx\)\(([A-Za-z_$][\w$]*),\{canPopOut:!1,session:([A-Za-z_$][\w$]*),variant:`window`,onAddToComposer:([A-Za-z_$][\w$]*),onClose:([A-Za-z_$][\w$]*)\}\)/u;
-  const match = currentSource.match(quickChatWindowPattern);
+  const quickChatWindowRootPattern =
+    /(([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),)\2===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background\/55`/u;
+  const match = currentSource.match(quickChatWindowRootPattern);
   if (match != null) {
-    const [, jsxAlias, componentAlias, sessionAlias, addToComposerAlias, closeAlias] = match;
-    const quickChatWindow =
-      `(0,${jsxAlias}.jsx)(${componentAlias},{canPopOut:!1,session:${sessionAlias},variant:\`window\`,onAddToComposer:${addToComposerAlias},onClose:${closeAlias}})`;
+    const [, floatingRoot, variantAlias, classNamesAlias, stylesAlias] = match;
     return currentSource.replace(
-      quickChatWindowPattern,
-      `(0,${jsxAlias}.jsx)(\`div\`,{\"${marker}\":!0,style:{height:\`calc(100vh / var(--codex-window-zoom))\`,width:\`calc(100vw / var(--codex-window-zoom))\`,zoom:\`var(--codex-window-zoom)\`},children:${quickChatWindow}})`,
+      quickChatWindowRootPattern,
+      `${floatingRoot}${variantAlias}===\`window\`&&${classNamesAlias}(${stylesAlias}.zoomedViewport,\`relative overflow-hidden bg-token-editor-background/55\`)`,
     );
   }
 
   if (
-    currentSource.includes("quickChatWindow?.rendererReady") &&
-    currentSource.includes("variant:`window`")
+    currentSource.includes(".floatingSurface") &&
+    currentSource.includes("relative h-dvh w-full overflow-hidden bg-token-editor-background/55")
   ) {
     console.warn(
-      "WARN: Could not find popped-out Quick Chat zoom wrapper insertion point — skipping Quick Chat zoom patch",
+      "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
     );
   }
 

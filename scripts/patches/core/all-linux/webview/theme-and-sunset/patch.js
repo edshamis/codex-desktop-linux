@@ -48,9 +48,9 @@ module.exports = [
     phase: "webview-asset",
     order: 1030,
     ciPolicy: "optional",
-    pattern: /^quick-chat-window-page-.*\.js$/,
-    missingDescription: "Quick Chat window page bundle",
-    skipDescription: "popped-out Quick Chat zoom patch",
+    pattern: /^app-initial~app-main~page-.*\.js$/,
+    missingDescription: "shared Quick Chat component bundle",
+    skipDescription: "popped-out Quick Chat zoom root patch",
     apply: applyLinuxQuickChatWindowZoomPatch,
   }),
   webviewAssetPatch({

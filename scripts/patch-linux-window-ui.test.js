@@ -2641,27 +2641,25 @@ test("adds a right-side safe area for Linux window controls in application menu 
 
 test("applies window zoom to the popped-out Quick Chat viewport", () => {
   const source =
-    "function T(){d.quickChatWindow?.rendererReady(n??null);return(0,k.jsx)(C,{canPopOut:!1,session:f,variant:`window`,onAddToComposer:E,onClose:_})}";
+    "st=vC(`flex flex-col overflow-hidden text-token-foreground`,c===`floating`&&vC(c0.floatingSurface,`fixed top-0 left-0`),c===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`)";
 
   const patched = applyPatchTwice(applyLinuxQuickChatWindowZoomPatch, source);
 
-  assert.match(patched, /\"data-codex-linux-quick-chat-zoom\":!0/);
-  assert.match(patched, /height:`calc\(100vh \/ var\(--codex-window-zoom\)\)`/);
-  assert.match(patched, /width:`calc\(100vw \/ var\(--codex-window-zoom\)\)`/);
-  assert.match(patched, /zoom:`var\(--codex-window-zoom\)`/);
   assert.match(
     patched,
-    /children:\(0,k\.jsx\)\(C,\{canPopOut:!1,session:f,variant:`window`,onAddToComposer:E,onClose:_\}\)/,
+    /c===`window`&&vC\(c0\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/,
   );
+  assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+  assert.doesNotMatch(patched, /data-codex-linux-quick-chat-zoom/);
 });
 
 test("reports popped-out Quick Chat zoom patch drift", () => {
   const source =
-    "function T(){d.quickChatWindow?.rendererReady(n??null);return render(C,{canPopOut:!1,session:f,variant:`window`})}";
+    "st=classes(`base`,c===`floating`?classes(c0.floatingSurface,`fixed`):c===`window`?`relative h-dvh w-full overflow-hidden bg-token-editor-background/55`:null)";
 
   const { warnings } = captureWarns(() => applyLinuxQuickChatWindowZoomPatch(source));
   assert.deepEqual(warnings, [
-    "WARN: Could not find popped-out Quick Chat zoom wrapper insertion point — skipping Quick Chat zoom patch",
+    "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
   ]);
 });
 
