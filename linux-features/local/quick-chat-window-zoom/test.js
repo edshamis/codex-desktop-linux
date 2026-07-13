@@ -49,12 +49,20 @@ function patchedScrollContract(variant = "c", flag = "z", next = "p") {
   return `let ${flag}=${variant}===\`floating\`||${variant}===\`window\`,${next}=0`;
 }
 
+function quickChatScrollComponent({ patchedSpacer = false } = {}) {
+  const spacer = patchedSpacer
+    ? 'className:`shrink-0`,style:d===`window`?{maxHeight:0}:void 0,"data-quick-chat-thread-scroll-spacer":`true`'
+    : 'className:`shrink-0`,"data-quick-chat-thread-scroll-spacer":`true`';
+  return `function scroll(e){let {children:n,footer:r,initialScrollMode:i,isWindowZoomApplied:a,scrollOrigin:o,variant:s}=e,d=s===void 0?\`floating\`:s;return jsx(\`div\`,{${spacer}})}`;
+}
+
 function quickChatComponent({
   roots = [`root=${unpatchedRoot()}`],
   scrollContracts = ["let lt=c===`floating`,ut=0", unpatchedScrollContract()],
+  scrollComponent = quickChatScrollComponent(),
   styleBindings = ["c0={zoomedViewport:a0,floatingSurface:o0}"],
 } = {}) {
-  return `function quickChat(c){${[
+  return `${scrollComponent};function quickChat(c){${[
     ...styleBindings,
     ...roots,
     ...scrollContracts,
@@ -112,7 +120,32 @@ test("applies zoom and zoom-aware scrolling to a popped-out Quick Chat viewport"
   assert.match(patched, /c===`window`&&vC\(c0\.zoomedViewport/);
   assert.match(patched, /let z=c===`floating`\|\|c===`window`,p=0/);
   assert.match(patched, /let lt=c===`floating`,ut=0/);
+  assert.match(
+    patched,
+    /className:`shrink-0`,style:d===`window`\?\{maxHeight:0\}:void 0,"data-quick-chat-thread-scroll-spacer":`true`/,
+  );
   assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
+});
+
+test("accepts an already capped detached-window spacer", () => {
+  const source = quickChatComponent({
+    roots: [`root=${patchedRoot()}`],
+    scrollComponent: quickChatScrollComponent({ patchedSpacer: true }),
+    scrollContracts: [patchedScrollContract()],
+  });
+  assert.equal(applyQuickChatWindowZoomPatch(source), source);
+});
+
+test("rejects a missing detached-window spacer contract", () => {
+  const source = quickChatComponent({
+    scrollComponent: "function unrelated(){return null}",
+  });
+  assert.deepEqual(
+    captureWarnings(() =>
+      assert.equal(applyQuickChatWindowZoomPatch(source), source),
+    ),
+    [warning],
+  );
 });
 
 test("patches every verified Quick Chat root", () => {

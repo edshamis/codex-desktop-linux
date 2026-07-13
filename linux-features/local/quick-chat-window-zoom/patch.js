@@ -5,6 +5,91 @@ const {
   findMatchingBrace,
 } = require("../../../scripts/patches/lib/minified-js.js");
 
+function findQuickChatWindowSpacerContract(currentSource) {
+  const identifier = "[A-Za-z_$][\\w$]*";
+  const scrollComponentPattern = new RegExp(
+    `\\{children:${identifier},footer:${identifier},initialScrollMode:${identifier},isWindowZoomApplied:${identifier},scrollOrigin:${identifier},variant:(${identifier})\\}=${identifier}`,
+    "gu",
+  );
+  const contracts = [];
+
+  for (const componentMatch of currentSource.matchAll(scrollComponentPattern)) {
+    const [rawVariantAlias] = componentMatch.slice(1);
+    const functionStart = currentSource.lastIndexOf(
+      "function ",
+      componentMatch.index,
+    );
+    if (functionStart === -1) {
+      continue;
+    }
+    const functionPrefix = currentSource.slice(
+      functionStart,
+      componentMatch.index,
+    );
+    const functionSignature = functionPrefix.match(
+      /^function [A-Za-z_$][\w$]*\([^)]*\)\{/u,
+    );
+    if (functionSignature == null) {
+      continue;
+    }
+    const functionBraceStart =
+      functionStart + functionSignature[0].lastIndexOf("{");
+    const functionEnd = findMatchingBrace(currentSource, functionBraceStart);
+    if (functionEnd === -1 || functionEnd < componentMatch.index) {
+      continue;
+    }
+
+    const functionSource = currentSource.slice(functionStart, functionEnd + 1);
+    if (!functionSource.includes("data-quick-chat-thread-scroll-spacer")) {
+      continue;
+    }
+
+    const normalizedVariantPattern = new RegExp(
+      `(?:^|,)(${identifier})=${escapeRegExp(rawVariantAlias)}===void 0\\?\`floating\`:${escapeRegExp(rawVariantAlias)}`,
+      "gu",
+    );
+    const normalizedVariantMatches = [
+      ...functionSource.matchAll(normalizedVariantPattern),
+    ];
+    if (normalizedVariantMatches.length !== 1) {
+      return null;
+    }
+    const variantAlias = normalizedVariantMatches[0][1];
+
+    const unpatchedSpacerPattern =
+      /className:`shrink-0`,"data-quick-chat-thread-scroll-spacer":`true`/gu;
+    const patchedSpacerPattern = new RegExp(
+      `className:\`shrink-0\`,style:${escapeRegExp(variantAlias)}===\`window\`\\?\\{maxHeight:0\\}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``,
+      "gu",
+    );
+    const unpatchedMatches = [
+      ...functionSource.matchAll(unpatchedSpacerPattern),
+    ];
+    const patchedMatches = [...functionSource.matchAll(patchedSpacerPattern)];
+    if (unpatchedMatches.length + patchedMatches.length !== 1) {
+      return null;
+    }
+
+    const unpatchedMatch = unpatchedMatches[0];
+    contracts.push({
+      edit:
+        unpatchedMatch == null
+          ? null
+          : {
+              start: functionStart + unpatchedMatch.index,
+              end:
+                functionStart + unpatchedMatch.index + unpatchedMatch[0].length,
+              replacement:
+                "className:`shrink-0`," +
+                `style:${variantAlias}===\`window\`?{maxHeight:0}:void 0,` +
+                '"data-quick-chat-thread-scroll-spacer":`true`',
+            },
+    });
+  }
+
+  return contracts.length === 1 ? contracts[0] : null;
+}
+
 function applyQuickChatWindowZoomPatch(currentSource) {
   const zoomContractLookbehind = 12_000;
   const quickChatWindowRootPrefixPattern =
@@ -28,6 +113,16 @@ function applyQuickChatWindowZoomPatch(currentSource) {
       ),
     );
     const edits = new Map();
+    const spacerContract = findQuickChatWindowSpacerContract(currentSource);
+    if (spacerContract == null) {
+      console.warn(
+        "WARN: Could not find popped-out Quick Chat zoom root insertion point — skipping Quick Chat zoom patch",
+      );
+      return currentSource;
+    }
+    if (spacerContract.edit != null) {
+      edits.set(spacerContract.edit.start, spacerContract.edit);
+    }
     const hasUnknownRoot = roots.some((root) => {
       const patchableRoot = patchableRoots.get(root.index);
       const isPatchedRoot = patchedRootIndexes.has(root.index);

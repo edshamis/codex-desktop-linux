@@ -6,7 +6,9 @@ same app zoom level as the main window. It replaces Quick Chat's fixed
 the popped-out window as zoomed for Quick Chat's internal scroll-coordinate
 conversion. Without the second half, submitting a prompt at non-default zoom
 can anchor the new turn far past its intended position and leave most of the
-window blank.
+window blank. The detached window also caps Quick Chat's synthetic thread-tail
+spacer so a short response does not push earlier turns above a mostly empty
+viewport; the floating overlay keeps upstream's reserved response space.
 
 The feature is intentionally local rather than part of the upstream core patch
 set: it is a workflow-specific customization and upstream does not consider it
@@ -30,8 +32,8 @@ node --test linux-features/local/quick-chat-window-zoom/test.js
 node --test scripts/patch-linux-window-ui.test.js
 ```
 
-The patch is idempotent and all-or-nothing across discovered Quick Chat roots
-and their zoom-aware scroll signals. If an upstream bundle drifts or either
-contract cannot be verified, it warns and leaves the asset unchanged. Since
-enabled-feature drift rejects an updater candidate, upstream app updates must
-pass CI before this feature is deployed.
+The patch is idempotent and all-or-nothing across discovered Quick Chat roots,
+their zoom-aware scroll signals, and the detached-window thread-tail spacer. If
+an upstream bundle drifts or any contract cannot be verified, it warns and
+leaves the asset unchanged. Since enabled-feature drift rejects an updater
+candidate, upstream app updates must pass CI before this feature is deployed.
