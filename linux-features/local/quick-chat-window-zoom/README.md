@@ -7,8 +7,9 @@ the popped-out window as zoomed for Quick Chat's internal scroll-coordinate
 conversion. Without the second half, submitting a prompt at non-default zoom
 can anchor the new turn far past its intended position and leave most of the
 window blank. The detached window also caps Quick Chat's synthetic thread-tail
-spacer so a short response does not push earlier turns above a mostly empty
-viewport; the floating overlay keeps upstream's reserved response space.
+spacer at 48 CSS pixels: enough room for response controls above the fixed
+composer without pushing earlier turns above a mostly empty viewport. The
+floating overlay keeps upstream's reserved response space.
 
 The feature is intentionally local rather than part of the upstream core patch
 set: it is a workflow-specific customization and upstream does not consider it

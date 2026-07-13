@@ -5,6 +5,8 @@ const {
   findMatchingBrace,
 } = require("../../../scripts/patches/lib/minified-js.js");
 
+const quickChatWindowSpacerMaxHeight = 48;
+
 function findQuickChatWindowSpacerContract(currentSource) {
   const identifier = "[A-Za-z_$][\\w$]*";
   const scrollComponentPattern = new RegExp(
@@ -65,23 +67,34 @@ function findQuickChatWindowSpacerContract(currentSource) {
     const unpatchedMatches = [
       ...functionSource.matchAll(unpatchedSpacerPattern),
     ];
-    const patchedMatches = [...functionSource.matchAll(patchedSpacerPattern)];
-    if (unpatchedMatches.length + patchedMatches.length !== 1) {
+    const zeroCapMatches = [...functionSource.matchAll(patchedSpacerPattern)];
+    const cappedSpacerPattern = new RegExp(
+      patchedSpacerPattern.source.replace(
+        "maxHeight:0",
+        `maxHeight:${quickChatWindowSpacerMaxHeight}`,
+      ),
+      patchedSpacerPattern.flags,
+    );
+    const cappedMatches = [...functionSource.matchAll(cappedSpacerPattern)];
+    if (
+      unpatchedMatches.length + zeroCapMatches.length + cappedMatches.length !==
+      1
+    ) {
       return null;
     }
 
-    const unpatchedMatch = unpatchedMatches[0];
+    const editableMatch = unpatchedMatches[0] ?? zeroCapMatches[0];
     contracts.push({
       edit:
-        unpatchedMatch == null
+        editableMatch == null
           ? null
           : {
-              start: functionStart + unpatchedMatch.index,
+              start: functionStart + editableMatch.index,
               end:
-                functionStart + unpatchedMatch.index + unpatchedMatch[0].length,
+                functionStart + editableMatch.index + editableMatch[0].length,
               replacement:
                 "className:`shrink-0`," +
-                `style:${variantAlias}===\`window\`?{maxHeight:0}:void 0,` +
+                `style:${variantAlias}===\`window\`?{maxHeight:${quickChatWindowSpacerMaxHeight}}:void 0,` +
                 '"data-quick-chat-thread-scroll-spacer":`true`',
             },
     });
@@ -297,4 +310,5 @@ module.exports = {
     },
   ],
   applyQuickChatWindowZoomPatch,
+  quickChatWindowSpacerMaxHeight,
 };
