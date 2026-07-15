@@ -7,9 +7,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- An opt-in `chatgpt-complete-history` feature shows TPP phone conversations and
-  merges the dedicated TPP feed into Quick Chat history without changing the
-  main Projects or Scheduled pages.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled
   rejections create one fingerprinted drift issue and supersede issues for
@@ -38,9 +35,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Popped-out Quick Chat now keeps the final answer above its fixed composer at
-  different zoom levels. Its bounded prompt-anchor spacer follows the measured
-  footer height instead of assuming a fixed 48-pixel clearance.
 - Approval notifications now preserve the upstream Approve, Approve for
   session, and Decline actions on Linux. A small freedesktop notification
   bridge forwards the action and close signals that Electron's Linux
@@ -159,7 +153,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `~/.config/<appId>/settings.json` as `codex-linux-auto-update-on-exit`, and
   `codex-update-manager` rereads it during reconciliation as an overlay over
   `config.toml` so the in-app preference wins without restarting the service.
-- `codex-update-manager` can now track newer _wrapper_ releases (this repo's own
+- `codex-update-manager` can now track newer *wrapper* releases (this repo's own
   Linux features and fixes) in addition to the upstream Codex DMG. Opt in with
   `enable_wrapper_updates = true` in `config.toml`; a new `check-wrapper`
   subcommand and the `status --json` output report the detected wrapper commit
@@ -222,7 +216,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `CODEX_CLI_PATH`.
 - The in-app updater no longer quits into a broken `pkexec` install path when a
   minimal window-manager session has no graphical polkit authentication agent;
-  it keeps the rebuilt package ready and reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...` command instead.
+  it keeps the rebuilt package ready and reports a terminal `sudo
+  /usr/bin/codex-update-manager ... --path ...` command instead.
 - The opt-in Linux AppShots bare-modifier shortcuts now require left and right
   modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
   key from opening AppShots.
@@ -334,6 +329,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `make build-app` now rebuilds `better-sqlite3` with an Electron 41-compatible release when the upstream DMG bundles an older native module source.
 - `codex-update-manager` now refreshes CLI status when the daemon starts and shows a desktop notification if the Codex CLI is missing, so package installs do not rely on the user manually checking updater state to understand why Codex Desktop cannot launch cleanly.
 - When the Codex CLI is missing, terminal launches still prompt before installation and GUI launches now have a matching fallback path instead of failing with only a passive notification.
+
 
 ## [0.5.0] - 2026-04-30
 
