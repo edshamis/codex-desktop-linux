@@ -7,6 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- An opt-in `chatgpt-complete-history` feature shows TPP phone and scheduled-run
+  conversations in Quick Chat history and keeps the ChatGPT project list fully
+  expanded instead of initially limiting it to five projects.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled
   rejections create one fingerprinted drift issue and supersede issues for

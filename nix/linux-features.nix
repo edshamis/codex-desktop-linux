@@ -2,6 +2,7 @@
 let
   supportedFeatureIds = [
     "appshots"
+    "chatgpt-complete-history"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"

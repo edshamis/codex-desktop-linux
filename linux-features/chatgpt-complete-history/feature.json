@@ -1,0 +1,9 @@
+{
+  "id": "chatgpt-complete-history",
+  "title": "ChatGPT Complete History",
+  "description": "Show TPP phone and scheduled-run conversations in Quick Chat history and keep all ChatGPT projects visible.",
+  "defaultEnabled": false,
+  "entrypoints": {
+    "patchDescriptors": "./patch.js"
+  }
+}

@@ -13,6 +13,7 @@ let
   testFeatureIds = [
     "persistent-status-panel"
     "appshots"
+    "chatgpt-complete-history"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -23,6 +24,7 @@ let
   ];
   normalizedTestFeatureIds = [
     "appshots"
+    "chatgpt-complete-history"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -125,6 +127,7 @@ let
     enableComputerUseUi = true;
     linuxFeatureIds = [
       "remote-mobile-control"
+      "chatgpt-complete-history"
       "frameless-titlebar"
       "global-dictation"
       "persistent-status-panel"
