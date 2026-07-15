@@ -1,19 +1,24 @@
 # ChatGPT Complete History
 
-This opt-in feature removes two upstream presentation boundaries from the
-desktop ChatGPT surfaces:
+This opt-in feature fills the history gaps in the desktop ChatGPT surfaces:
 
 - Quick Chat history includes conversations whose `conversation_origin` is
-  `tpp`, including chats created in the phone app and conversations produced by
-  scheduled runs.
+  `tpp`, including chats created in the phone app. Full history also merges the
+  dedicated TPP feed so conversations produced by scheduled runs appear under
+  a **Scheduled** heading.
+- Full Quick Chat history groups project conversations under their ChatGPT
+  project names, such as **life**, and keeps projectless conversations under
+  **Recent chats**. It seeds headings from the complete project-name map, so a
+  project remains visible even when none of its chats are in the loaded history
+  page. The compact recent-chat preview remains ungrouped.
 - The ChatGPT project list stays fully expanded instead of initially exposing
   only five projects behind a **Show all projects** control.
 
-The feature does not change the conversation or project API requests. It uses
-the data already returned by ChatGPT, preserves archived-chat handling and
-pagination, and leaves the dedicated TPP/Codex Tasks lane intact. Schedule
-definitions still live in Automations; this feature exposes their resulting
-conversations in Quick Chat history.
+The feature preserves archived-chat handling, generic history pagination, and
+the dedicated TPP/Codex Tasks lane. It adds one existing TPP conversation query
+to full Quick Chat history and deduplicates its results against the generic
+feed. Schedule definitions still live in Automations; this feature exposes
+their resulting conversations in Quick Chat history.
 
 This is disabled by default because upstream intentionally separates TPP tasks
 from classic Quick Chat history and collapses long project lists. Enabling it
@@ -34,7 +39,8 @@ node --test linux-features/chatgpt-complete-history/test.js
 node --test scripts/patch-linux-window-ui.test.js
 ```
 
-The patch is idempotent and all-or-nothing. If any of the two TPP filters or the
-project-collapse contract drifts in a future upstream bundle, the feature warns
-and leaves that asset byte-identical. Enabled-feature drift then rejects the
-candidate before it can replace the working app.
+The patch is idempotent and all-or-nothing. If any TPP filter, dedicated-feed,
+history-row, section-renderer, or project-collapse contract drifts in a future
+upstream bundle, the feature warns and leaves that asset byte-identical.
+Enabled-feature drift then rejects the candidate before it can replace the
+working app.
