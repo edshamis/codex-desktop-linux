@@ -38,6 +38,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Popped-out Quick Chat now keeps the final answer above its fixed composer at
+  different zoom levels. Its bounded prompt-anchor spacer follows the measured
+  footer height instead of assuming a fixed 48-pixel clearance.
 - Approval notifications now preserve the upstream Approve, Approve for
   session, and Decline actions on Linux. A small freedesktop notification
   bridge forwards the action and close signals that Electron's Linux

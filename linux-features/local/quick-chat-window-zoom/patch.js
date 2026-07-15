@@ -5,7 +5,9 @@ const {
   findMatchingBrace,
 } = require("../../../scripts/patches/lib/minified-js.js");
 
-const quickChatWindowSpacerMaxHeight = 48;
+const quickChatWindowSpacerExtraHeight = 48;
+const quickChatWindowSpacerMaxHeight =
+  `calc(var(--quick-chat-footer-height, 0px) + ${quickChatWindowSpacerExtraHeight}px)`;
 
 function findQuickChatWindowSpacerContract(currentSource) {
   const identifier = "[A-Za-z_$][\\w$]*";
@@ -60,30 +62,46 @@ function findQuickChatWindowSpacerContract(currentSource) {
 
     const unpatchedSpacerPattern =
       /className:`shrink-0`,"data-quick-chat-thread-scroll-spacer":`true`/gu;
-    const patchedSpacerPattern = new RegExp(
+    const fixedSpacerPattern = new RegExp(
       `className:\`shrink-0\`,style:${escapeRegExp(variantAlias)}===\`window\`\\?\\{maxHeight:0\\}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``,
       "gu",
     );
     const unpatchedMatches = [
       ...functionSource.matchAll(unpatchedSpacerPattern),
     ];
-    const zeroCapMatches = [...functionSource.matchAll(patchedSpacerPattern)];
-    const cappedSpacerPattern = new RegExp(
-      patchedSpacerPattern.source.replace(
+    const zeroCapMatches = [...functionSource.matchAll(fixedSpacerPattern)];
+    const legacyCapPattern = new RegExp(
+      fixedSpacerPattern.source.replace(
         "maxHeight:0",
-        `maxHeight:${quickChatWindowSpacerMaxHeight}`,
+        `maxHeight:${quickChatWindowSpacerExtraHeight}`,
       ),
-      patchedSpacerPattern.flags,
+      fixedSpacerPattern.flags,
     );
-    const cappedMatches = [...functionSource.matchAll(cappedSpacerPattern)];
+    const legacyCapMatches = [
+      ...functionSource.matchAll(legacyCapPattern),
+    ];
+    const responsiveCapPattern = new RegExp(
+      fixedSpacerPattern.source.replace(
+        "maxHeight:0",
+        `maxHeight:\`${escapeRegExp(quickChatWindowSpacerMaxHeight)}\``,
+      ),
+      fixedSpacerPattern.flags,
+    );
+    const responsiveCapMatches = [
+      ...functionSource.matchAll(responsiveCapPattern),
+    ];
     if (
-      unpatchedMatches.length + zeroCapMatches.length + cappedMatches.length !==
+      unpatchedMatches.length +
+        zeroCapMatches.length +
+        legacyCapMatches.length +
+        responsiveCapMatches.length !==
       1
     ) {
       return null;
     }
 
-    const editableMatch = unpatchedMatches[0] ?? zeroCapMatches[0];
+    const editableMatch =
+      unpatchedMatches[0] ?? zeroCapMatches[0] ?? legacyCapMatches[0];
     contracts.push({
       edit:
         editableMatch == null
@@ -94,7 +112,7 @@ function findQuickChatWindowSpacerContract(currentSource) {
                 functionStart + editableMatch.index + editableMatch[0].length,
               replacement:
                 "className:`shrink-0`," +
-                `style:${variantAlias}===\`window\`?{maxHeight:${quickChatWindowSpacerMaxHeight}}:void 0,` +
+                `style:${variantAlias}===\`window\`?{maxHeight:\`${quickChatWindowSpacerMaxHeight}\`}:void 0,` +
                 '"data-quick-chat-thread-scroll-spacer":`true`',
             },
     });
@@ -310,5 +328,6 @@ module.exports = {
     },
   ],
   applyQuickChatWindowZoomPatch,
+  quickChatWindowSpacerExtraHeight,
   quickChatWindowSpacerMaxHeight,
 };

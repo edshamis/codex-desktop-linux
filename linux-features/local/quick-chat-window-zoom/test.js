@@ -12,6 +12,7 @@ const {
 } = require("../../../scripts/lib/linux-features.js");
 const {
   applyQuickChatWindowZoomPatch,
+  quickChatWindowSpacerExtraHeight,
   quickChatWindowSpacerMaxHeight,
 } = require("./patch.js");
 
@@ -53,10 +54,14 @@ function patchedScrollContract(variant = "c", flag = "z", next = "p") {
 }
 
 function quickChatScrollComponent({ spacerMaxHeight = null } = {}) {
+  const serializedSpacerMaxHeight =
+    typeof spacerMaxHeight === "string"
+      ? `\`${spacerMaxHeight}\``
+      : spacerMaxHeight;
   const spacer =
     spacerMaxHeight == null
       ? 'className:`shrink-0`,"data-quick-chat-thread-scroll-spacer":`true`'
-      : `className:\`shrink-0\`,style:d===\`window\`?{maxHeight:${spacerMaxHeight}}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``;
+      : `className:\`shrink-0\`,style:d===\`window\`?{maxHeight:${serializedSpacerMaxHeight}}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``;
   return `function scroll(e){let {children:n,footer:r,initialScrollMode:i,isWindowZoomApplied:a,scrollOrigin:o,variant:s}=e,d=s===void 0?\`floating\`:s;return jsx(\`div\`,{${spacer}})}`;
 }
 
@@ -126,13 +131,13 @@ test("applies zoom and zoom-aware scrolling to a popped-out Quick Chat viewport"
   assert.match(patched, /let lt=c===`floating`,ut=0/);
   assert.ok(
     patched.includes(
-      `className:\`shrink-0\`,style:d===\`window\`?{maxHeight:${quickChatWindowSpacerMaxHeight}}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``,
+      `className:\`shrink-0\`,style:d===\`window\`?{maxHeight:\`${quickChatWindowSpacerMaxHeight}\`}:void 0,"data-quick-chat-thread-scroll-spacer":\`true\``,
     ),
   );
   assert.doesNotMatch(patched, /c===`window`&&`relative h-dvh w-full/);
 });
 
-test("accepts an already capped detached-window spacer", () => {
+test("accepts an already footer-aware detached-window spacer", () => {
   const source = quickChatComponent({
     roots: [`root=${patchedRoot()}`],
     scrollComponent: quickChatScrollComponent({
@@ -150,11 +155,27 @@ test("upgrades the zero-cap spacer to the response-control gutter", () => {
     scrollContracts: [patchedScrollContract()],
   });
   const patched = applyPatchTwice(source);
-  assert.match(
-    patched,
-    new RegExp(`maxHeight:${quickChatWindowSpacerMaxHeight}`),
+  assert.ok(
+    patched.includes(
+      `maxHeight:\`calc(var(--quick-chat-footer-height, 0px) + ${quickChatWindowSpacerExtraHeight}px)\``,
+    ),
   );
   assert.doesNotMatch(patched, /maxHeight:0/);
+});
+
+test("upgrades the legacy fixed cap to footer-aware answer clearance", () => {
+  const source = quickChatComponent({
+    roots: [`root=${patchedRoot()}`],
+    scrollComponent: quickChatScrollComponent({
+      spacerMaxHeight: quickChatWindowSpacerExtraHeight,
+    }),
+    scrollContracts: [patchedScrollContract()],
+  });
+  const patched = applyPatchTwice(source);
+  assert.ok(
+    patched.includes(`maxHeight:\`${quickChatWindowSpacerMaxHeight}\``),
+  );
+  assert.doesNotMatch(patched, /maxHeight:48/);
 });
 
 test("rejects a missing detached-window spacer contract", () => {
