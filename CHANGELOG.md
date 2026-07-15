@@ -10,7 +10,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - An opt-in `chatgpt-complete-history` feature shows TPP phone conversations,
   merges the dedicated TPP feed into Quick Chat history, adds every ChatGPT
   cloud project to the main Projects page, and adds cloud scheduled runs plus a
-  task-manager link to the main Scheduled page. Cloud rows stay separate from
+  task-manager link to the main Scheduled page. Cloud project rows reuse the
+  native responsive Projects table grid, and all cloud rows stay separate from
   local Codex project and automation mutation handlers.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled

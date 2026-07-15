@@ -244,6 +244,12 @@ test("patches the main Projects page instead of Quick Chat grouping", () => {
   assert.equal(patched.includes(cloudProjectsPatchMarker), true);
   assert.match(patched, /cloudRows:codexLinuxCloudProjectRows/u);
   assert.match(patched, /codexLinuxCloudProjectRow/u);
+  assert.match(patched, /className:k\(tn,/u);
+  assert.match(patched, /max-\[920px\]:hidden/u);
+  assert.doesNotMatch(
+    patched,
+    /grid-cols-\[minmax\(0,1fr\)_minmax\(8rem,.8fr\)/u,
+  );
   assert.doesNotMatch(patched, /quickChat\.history\.(scheduled|recent)/u);
   assertParses(patched, "cloud-projects");
 });
