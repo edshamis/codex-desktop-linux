@@ -39,6 +39,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Full Quick Chat history now scrolls to its first section when opened instead
+  of inheriting the active conversation's bottom position and hiding Scheduled
+  and project headings above the viewport. Project-name query updates also
+  refresh the compiled history projection instead of leaving headings stale.
 - Approval notifications now preserve the upstream Approve, Approve for
   session, and Decline actions on Linux. A small freedesktop notification
   bridge forwards the action and close signals that Electron's Linux
@@ -157,7 +161,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `~/.config/<appId>/settings.json` as `codex-linux-auto-update-on-exit`, and
   `codex-update-manager` rereads it during reconciliation as an overlay over
   `config.toml` so the in-app preference wins without restarting the service.
-- `codex-update-manager` can now track newer *wrapper* releases (this repo's own
+- `codex-update-manager` can now track newer _wrapper_ releases (this repo's own
   Linux features and fixes) in addition to the upstream Codex DMG. Opt in with
   `enable_wrapper_updates = true` in `config.toml`; a new `check-wrapper`
   subcommand and the `status --json` output report the detected wrapper commit
@@ -221,7 +225,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The in-app updater no longer quits into a broken `pkexec` install path when a
   minimal window-manager session has no graphical polkit authentication agent;
   it keeps the rebuilt package ready and reports a terminal `sudo
-  /usr/bin/codex-update-manager ... --path ...` command instead.
+/usr/bin/codex-update-manager ... --path ...` command instead.
 - The opt-in Linux AppShots bare-modifier shortcuts now require left and right
   modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
   key from opening AppShots.
@@ -333,7 +337,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `make build-app` now rebuilds `better-sqlite3` with an Electron 41-compatible release when the upstream DMG bundles an older native module source.
 - `codex-update-manager` now refreshes CLI status when the daemon starts and shows a desktop notification if the Codex CLI is missing, so package installs do not rely on the user manually checking updater state to understand why Codex Desktop cannot launch cleanly.
 - When the Codex CLI is missing, terminal launches still prompt before installation and GUI launches now have a matching fallback path instead of failing with only a passive notification.
-
 
 ## [0.5.0] - 2026-04-30
 

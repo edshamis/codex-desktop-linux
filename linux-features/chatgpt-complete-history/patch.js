@@ -5,6 +5,8 @@ const patchMarker = "/*codex-linux-chatgpt-complete-history*/";
 const projectPatchMarker = "/*codex-linux-chatgpt-all-projects*/";
 const flatHistoryPatchMarker = "/*codex-linux-chatgpt-flat-history-sections*/";
 const tppFeedPatchMarker = "/*codex-linux-chatgpt-tpp-history-feed*/";
+const historyScrollPatchMarker = "/*codex-linux-chatgpt-history-scroll-top*/";
+const projectMemoPatchMarker = "/*codex-linux-chatgpt-project-names-memo*/";
 const warning =
   "WARN: Could not find current ChatGPT history, TPP-feed, and project-section contracts - skipping complete history feature patch";
 
@@ -119,6 +121,8 @@ function applyChatgptCompleteHistoryPatch(source) {
   );
   const hasFlatHistoryPatch = source.includes(flatHistoryPatchMarker);
   const hasTppFeedPatch = source.includes(tppFeedPatchMarker);
+  const hasHistoryScrollPatch = source.includes(historyScrollPatchMarker);
+  const hasProjectMemoPatch = source.includes(projectMemoPatchMarker);
 
   if (
     targetFilters.length === 0 &&
@@ -128,7 +132,9 @@ function applyChatgptCompleteHistoryPatch(source) {
     projectCollapses.length === 0 &&
     patchedProjectCollapses.length === 1 &&
     hasFlatHistoryPatch &&
-    hasTppFeedPatch
+    hasTppFeedPatch &&
+    hasHistoryScrollPatch &&
+    hasProjectMemoPatch
   ) {
     return source;
   }
@@ -140,7 +146,9 @@ function applyChatgptCompleteHistoryPatch(source) {
     patchedPredicates.length !== 0 ||
     projectCollapses.length !== 1 ||
     hasFlatHistoryPatch ||
-    hasTppFeedPatch
+    hasTppFeedPatch ||
+    hasHistoryScrollPatch ||
+    hasProjectMemoPatch
   ) {
     console.warn(warning);
     return source;
@@ -167,9 +175,9 @@ function applyChatgptCompleteHistoryPatch(source) {
   const patchedHistoryProjection =
     "let i=PD(r.conversationId),a=r.kind===`optimistic`?e.get(r.conversationId)??i:i,o=r.kind===`optimistic`?r.projectId??null:mD(r.conversation);return[{conversationId:a,isAutomationConversation:r.kind!==`optimistic`&&r.conversation.is_automation_conversation===!0,isProjectPlaceholder:!1,projectId:o,projectName:o==null?null:codexLinuxProjectNamesById.get(o)??null,recencyAt:r.recencyAt,title:(r.kind===`optimistic`?t.get(a):r.conversation.title)?.trim()||n}]});for(const[codexLinuxProjectId,codexLinuxProjectName]of codexLinuxProjectNamesById)codexLinuxHistoryItems.some(e=>e.projectId===codexLinuxProjectId)||codexLinuxHistoryItems.push({conversationId:`codex-linux-project:${codexLinuxProjectId}`,isAutomationConversation:!1,isProjectPlaceholder:!0,projectId:codexLinuxProjectId,projectName:codexLinuxProjectName,recencyAt:Number.NEGATIVE_INFINITY,title:codexLinuxProjectName});return codexLinuxHistoryItems}";
   const historyProjectionCall =
-    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]";
+    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]}),we=PL(Ce)";
   const patchedHistoryProjectionCall =
-    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets],projectNamesById:k.projectNamesById";
+    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets],projectNamesById:k.projectNamesById}),codexLinuxQuickChatProjectNamesByHistory.set(Ce,k.projectNamesById),we=PL(Ce)";
   const tppFeedEnable = "S=zi({enabled:l&&a,";
   const patchedTppFeedEnable = `${tppFeedPatchMarker}S=zi({enabled:l&&(a||i),`;
   const flatHistoryConversations =
@@ -188,6 +196,19 @@ function applyChatgptCompleteHistoryPatch(source) {
   const patchedHistoryRows =
     "c=a==null?n.filter(e=>!e.isProjectPlaceholder).map(e):codexLinuxRenderQuickChatHistorySections(n,e)";
   const historyRendererAnchor = "function hPe(e){";
+  const projectMemoCondition =
+    "if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P){";
+  const patchedProjectMemoCondition = `${projectMemoPatchMarker}if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P||codexLinuxQuickChatProjectNamesByHistory.get(t[19])!==k.projectNamesById){`;
+  const historyViewState =
+    "[ye,be]=(0,O8.useState)(!1),[xe,Se]=(0,O8.useState)(!1),Ce,we;";
+  const patchedHistoryViewState =
+    "[ye,be]=(0,O8.useState)(!1),codexLinuxHistoryTopRef=(0,O8.useRef)(null);" +
+    `${historyScrollPatchMarker}(0,O8.useEffect)(()=>{ye&&requestAnimationFrame(()=>codexLinuxHistoryTopRef.current?.scrollIntoView({block:\`start\`}))},[ye]);` +
+    "let[xe,Se]=(0,O8.useState)(!1),Ce,we;";
+  const historyViewContainer =
+    '$t=(0,A8.jsx)(`div`,{"aria-hidden":Wt,className:Kt,inert:qt,children:Qt})';
+  const patchedHistoryViewContainer =
+    '$t=(0,A8.jsx)(`div`,{ref:codexLinuxHistoryTopRef,"aria-hidden":Wt,className:Kt,inert:qt,children:Qt})';
   const mergeHelperSource = mergeConversationLists
     .toString()
     .replace(
@@ -202,7 +223,7 @@ function applyChatgptCompleteHistoryPatch(source) {
     );
   const renderHelperSource =
     "function codexLinuxRenderQuickChatHistorySections(e,t){return codexLinuxBuildQuickChatHistorySections(e).flatMap(e=>[(0,u8.jsx)(`li`,{className:`mt-4 px-1 text-sm font-medium text-token-text-tertiary`,children:e.kind===`scheduled`?(0,u8.jsx)($,{id:`quickChat.history.scheduled`,defaultMessage:`Scheduled`,description:`Heading for scheduled-run conversations in full Quick Chat history`}):e.kind===`recent`?(0,u8.jsx)($,{id:`quickChat.history.recent`,defaultMessage:`Recent chats`,description:`Heading for projectless conversations in full Quick Chat history`}):e.label},`codex-linux-history-section:${e.key}`),...e.items.map(t)])}";
-  const patchedHistoryRendererAnchor = `${mergeHelperSource}${sectionHelperSource}${renderHelperSource}${historyRendererAnchor}`;
+  const patchedHistoryRendererAnchor = `${mergeHelperSource}${sectionHelperSource}${renderHelperSource}const codexLinuxQuickChatProjectNamesByHistory=new WeakMap;${historyRendererAnchor}`;
   const literalContracts = [
     [historyParameters, patchedHistoryParameters],
     [historyProjection, patchedHistoryProjection],
@@ -212,6 +233,9 @@ function applyChatgptCompleteHistoryPatch(source) {
     [conversationError, patchedConversationError],
     [conversationLoading, patchedConversationLoading],
     [historyRows, patchedHistoryRows],
+    [projectMemoCondition, patchedProjectMemoCondition],
+    [historyViewState, patchedHistoryViewState],
+    [historyViewContainer, patchedHistoryViewContainer],
     [historyRendererAnchor, patchedHistoryRendererAnchor],
   ];
 
@@ -276,8 +300,10 @@ module.exports = {
   buildQuickChatHistorySections,
   descriptors,
   flatHistoryPatchMarker,
+  historyScrollPatchMarker,
   mergeConversationLists,
   patchMarker,
+  projectMemoPatchMarker,
   projectPatchMarker,
   tppFeedPatchMarker,
   warning,

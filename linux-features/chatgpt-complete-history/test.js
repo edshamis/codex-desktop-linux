@@ -17,8 +17,10 @@ const {
   buildQuickChatHistorySections,
   descriptors,
   flatHistoryPatchMarker,
+  historyScrollPatchMarker,
   mergeConversationLists,
   patchMarker,
+  projectMemoPatchMarker,
   tppFeedPatchMarker,
   warning,
 } = require("./patch.js");
@@ -30,7 +32,8 @@ const currentSource = [
   "function firstProjects(e,t){return t<limit}",
   "function projects(A,g){let B=A.length>limit,V=B&&!g?A.filter(firstProjects):A;return{hasOverflow:B,visible:V}}",
   "function feed(l,a,i,x,y,tppData){let S=zi({enabled:l&&a,data:tppData,isError:!1,isLoading:!1,queryFn:async()=>[],queryKey:[],staleTime:0}),O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[];return{items:O,isConversationError:l&&(a?S.isError:y.isError||x.isError),isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)}}",
-  "function projectHistory(e,k){return Cve({optimisticConversationIdBySourceId:new Map,optimisticTitleByConversationId:new Map,recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]})}",
+  "function PL(e){return e}",
+  'function quickChatProjectHistory(e,k,u,j,M,P,O8,A8,Wt,Kt,qt,Qt){let t=[],r=new Map,[ye,be]=(0,O8.useState)(!1),[xe,Se]=(0,O8.useState)(!1),Ce,we;if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P){Ce=Cve({optimisticConversationIdBySourceId:r,optimisticTitleByConversationId:new Map(j.map((e,t)=>[r.get(e)??e,M[t]??null])),recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]}),we=PL(Ce),t[13]=k.chatTargets,t[14]=k.pinnedTargets,t[15]=u,t[16]=j,t[17]=M,t[18]=P,t[19]=Ce,t[20]=we}else Ce=t[19],we=t[20];let $t;return t[264]!==Wt||t[265]!==Kt||t[266]!==qt||t[267]!==Qt?($t=(0,A8.jsx)(`div`,{"aria-hidden":Wt,className:Kt,inert:qt,children:Qt}),t[264]=Wt,t[265]=Kt,t[266]=qt,t[267]=Qt,t[268]=$t):$t=t[268],$t}',
   "function hPe(e){let{conversations:n,onNewChat:a}=e,c;if(!0){let e=e=>e.title;c=n.map(e)}return c}",
   "globalThis.historyTargets=(r,p)=>Cve({optimisticConversationIdBySourceId:new Map,optimisticTitleByConversationId:new Map,recentFallbackTitle:`Untitled`,sourceTargets:r,projectNamesById:p});globalThis.recentConversations=recent;globalThis.visibleProjects=projects;globalThis.flatFeed=feed;globalThis.renderHistory=hPe;",
 ].join("");
@@ -144,6 +147,58 @@ test("keeps regular, phone, and scheduled TPP conversations", () => {
   assert.equal(patched.includes(patchMarker), true);
   assert.equal(patched.includes(tppFeedPatchMarker), true);
   assert.equal(patched.includes(flatHistoryPatchMarker), true);
+  assert.equal(patched.includes(historyScrollPatchMarker), true);
+  assert.equal(patched.includes(projectMemoPatchMarker), true);
+});
+
+test("scrolls full history to its first section when opened", () => {
+  const patched = applyPatchTwice(currentSource);
+  let scrollOptions = null;
+  const historyTop = {
+    scrollIntoView(options) {
+      scrollOptions = options;
+    },
+  };
+  const context = {
+    A8: {
+      jsx: (type, props) => ({ props, type }),
+    },
+    Bxe: (conversation) => conversation.is_starred !== true,
+    O8: {
+      useEffect: (effect) => effect(),
+      useRef: () => ({ current: historyTop }),
+      useState: () => [true, () => {}],
+    },
+    PD: (id) => id,
+    limit: 5,
+    mD: (conversation) => conversation.gizmo_id ?? null,
+    requestAnimationFrame: (callback) => callback(),
+    zi: (config) => config,
+    zxe: (page) => page.items,
+  };
+  vm.runInNewContext(patched, context);
+
+  const result = context.quickChatProjectHistory(
+    "Untitled",
+    {
+      chatTargets: [],
+      pinnedTargets: [],
+      projectNamesById: new Map([["g-p-life", "life"]]),
+    },
+    {},
+    [],
+    [],
+    [],
+    context.O8,
+    context.A8,
+    false,
+    "history",
+    false,
+    "rows",
+  );
+
+  assert.equal(scrollOptions.block, "start");
+  assert.equal(result.props.ref.current, historyTop);
 });
 
 test("seeds project headings from the complete project-name map", () => {

@@ -10,7 +10,11 @@ This opt-in feature fills the history gaps in the desktop ChatGPT surfaces:
   project names, such as **life**, and keeps projectless conversations under
   **Recent chats**. It seeds headings from the complete project-name map, so a
   project remains visible even when none of its chats are in the loaded history
-  page. The compact recent-chat preview remains ungrouped.
+  page. Opening full history resets its shared scroll container to the first
+  section, so Scheduled and project headings are not hidden above the viewport.
+  Project-name query updates also invalidate the compiled history projection,
+  preventing headings from remaining stale. The compact recent-chat preview
+  remains ungrouped.
 - The ChatGPT project list stays fully expanded instead of initially exposing
   only five projects behind a **Show all projects** control.
 
@@ -40,7 +44,8 @@ node --test scripts/patch-linux-window-ui.test.js
 ```
 
 The patch is idempotent and all-or-nothing. If any TPP filter, dedicated-feed,
-history-row, section-renderer, or project-collapse contract drifts in a future
-upstream bundle, the feature warns and leaves that asset byte-identical.
+history-row, history-scroll, section-renderer, project-memo, or project-collapse
+contract drifts in a future upstream bundle, the feature warns and leaves that
+asset byte-identical.
 Enabled-feature drift then rejects the candidate before it can replace the
 working app.
