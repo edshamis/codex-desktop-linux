@@ -8,9 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - An opt-in `chatgpt-complete-history` feature shows TPP phone conversations,
-  merges scheduled-run conversations from the dedicated TPP feed, groups full
-  Quick Chat history under Scheduled and ChatGPT project headings, and keeps
-  the main ChatGPT project list fully expanded.
+  merges the dedicated TPP feed into Quick Chat history, adds every ChatGPT
+  cloud project to the main Projects page, and adds cloud scheduled runs plus a
+  task-manager link to the main Scheduled page. Cloud rows stay separate from
+  local Codex project and automation mutation handlers.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled
   rejections create one fingerprinted drift issue and supersede issues for
@@ -39,10 +40,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- Full Quick Chat history now scrolls to its first section when opened instead
-  of inheriting the active conversation's bottom position and hiding Scheduled
-  and project headings above the viewport. Project-name query updates also
-  refresh the compiled history projection instead of leaving headings stale.
 - Approval notifications now preserve the upstream Approve, Approve for
   session, and Decline actions on Linux. A small freedesktop notification
   bridge forwards the action and close signals that Electron's Linux

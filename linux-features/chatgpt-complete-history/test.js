@@ -2,6 +2,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -14,28 +15,48 @@ const {
 const { patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const {
   applyChatgptCompleteHistoryPatch,
-  buildQuickChatHistorySections,
+  applyMainProjectsPatch,
+  applyMainScheduledPatch,
+  buildCloudProjectRows,
+  buildCloudScheduledRuns,
+  cloudProjectsPatchMarker,
+  cloudScheduledPatchMarker,
   descriptors,
-  flatHistoryPatchMarker,
-  historyScrollPatchMarker,
+  historyPatchMarker,
+  historyWarning,
+  hookExportPatchMarker,
   mergeConversationLists,
-  patchMarker,
-  projectMemoPatchMarker,
+  projectsWarning,
+  scheduledWarning,
   tppFeedPatchMarker,
-  warning,
 } = require("./patch.js");
 
-const currentSource = [
-  "function Cve({optimisticConversationIdBySourceId:e,optimisticTitleByConversationId:t,recentFallbackTitle:n,sourceTargets:r}){return r.flatMap(r=>{if(r.kind!==`optimistic`&&r.conversation.conversation_origin===`tpp`)return[];let i=PD(r.conversationId),a=r.kind===`optimistic`?e.get(r.conversationId)??i:i;return[{conversationId:a,recencyAt:r.recencyAt,title:(r.kind===`optimistic`?t.get(a):r.conversation.title)?.trim()||n}]})}",
+const sharedSource = [
+  "function Cve(r){return r.flatMap(r=>{if(r.kind!==`optimistic`&&r.conversation.conversation_origin===`tpp`)return[];return[r.conversation]})}",
   "function keep(e){let{conversation_origin:t}=e;return t!==`tpp`}",
+  "function zi(e){return e}",
+  "function zxe(e){return e.items}",
+  "function Bxe(e){return e.is_starred!==!0}",
+  "function EH(e){let{flatConversationHistory:i,tppOnly:a}=e===void 0?{}:e,l=!0,x={data:{pages:[{items:e.generic}]},isError:!1,isLoading:!1},y={isError:!1,isLoading:!1},S=zi({enabled:l&&a,data:e.tpp,isError:!1,isLoading:!1}),O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[];return{items:O,isConversationError:l&&(a?S.isError:y.isError||x.isError),isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)}}",
   "function recent(e){return e.filter(keep)}",
-  "function firstProjects(e,t){return t<limit}",
-  "function projects(A,g){let B=A.length>limit,V=B&&!g?A.filter(firstProjects):A;return{hasOverflow:B,visible:V}}",
-  "function feed(l,a,i,x,y,tppData){let S=zi({enabled:l&&a,data:tppData,isError:!1,isLoading:!1,queryFn:async()=>[],queryKey:[],staleTime:0}),O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[];return{items:O,isConversationError:l&&(a?S.isError:y.isError||x.isError),isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)}}",
-  "function PL(e){return e}",
-  'function quickChatProjectHistory(e,k,u,j,M,P,O8,A8,Wt,Kt,qt,Qt){let t=[],r=new Map,[ye,be]=(0,O8.useState)(!1),[xe,Se]=(0,O8.useState)(!1),Ce,we;if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P){Ce=Cve({optimisticConversationIdBySourceId:r,optimisticTitleByConversationId:new Map(j.map((e,t)=>[r.get(e)??e,M[t]??null])),recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]}),we=PL(Ce),t[13]=k.chatTargets,t[14]=k.pinnedTargets,t[15]=u,t[16]=j,t[17]=M,t[18]=P,t[19]=Ce,t[20]=we}else Ce=t[19],we=t[20];let $t;return t[264]!==Wt||t[265]!==Kt||t[266]!==qt||t[267]!==Qt?($t=(0,A8.jsx)(`div`,{"aria-hidden":Wt,className:Kt,inert:qt,children:Qt}),t[264]=Wt,t[265]=Kt,t[266]=qt,t[267]=Qt,t[268]=$t):$t=t[268],$t}',
-  "function hPe(e){let{conversations:n,onNewChat:a}=e,c;if(!0){let e=e=>e.title;c=n.map(e)}return c}",
-  "globalThis.historyTargets=(r,p)=>Cve({optimisticConversationIdBySourceId:new Map,optimisticTitleByConversationId:new Map,recentFallbackTitle:`Untitled`,sourceTargets:r,projectNamesById:p});globalThis.recentConversations=recent;globalThis.visibleProjects=projects;globalThis.flatFeed=feed;globalThis.renderHistory=hPe;",
+  "const EQ=1;",
+  "globalThis.historyTargets=Cve;globalThis.recent=recent;globalThis.source=EH;",
+  "export{EQ as $,};",
+].join("");
+
+const projectsSource = [
+  'import{In as ht}from"./app-initial~app-main~page-current.js";',
+  "function pn(){let e=[],t,r,i,o,w,R,Q,f,p,m,h,g,_,v,y=new Set,b,x=new Set,S,C,T,E,D,O,A,j,M,N,P,F,I,L,z,B,q,G;",
+  "let{groups:s,hasLoadedWorkspaceRootOptions:c,isWorkspaceRootOptionsLoading:l}=w(R,o),[u,d]=(0,Q.useState)(``);",
+  "if(e[4]!==y||e[5]!==c||e[6]!==t||e[7]!==l||e[8]!==i||e[9]!==u||e[10]!==g||e[11]!==x||e[12]!==_||e[13]!==m||e[14]!==f||e[15]!==T||e[16]!==v||e[17]!==s){",
+  "let n=Wt({cloudRows:void 0,groups:s,projectWritableRoots:[],query:u,sortDirection:m,sortKey:f,tasks:T}),r=c&&!l&&s.length===0;",
+  "return n.map(e=>{let t=y.has(e.id);return e.kind===`cloud`?null:(0,$.jsx)(yn,{expanded:t,onShowAllChange:t=>q(e.projectId,t),onToggleExpanded:()=>G(e.id),row:e,showAll:x.has(e.projectId)},e.id)})}}",
+].join("");
+
+const scheduledSource = [
+  'import{In as ht}from"./app-initial~app-main~page-current.js";',
+  "function ei(e){let M,N,U;return(0,Z.jsx)(`main`,{children:[M,N,U]})}",
+  "function oi(){let e=[];return(0,$.jsx)(`div`,{children:e.length===0?(0,$.jsx)(li,{empty:!0}):(0,$.jsx)(ei,{automations:e})})}",
 ].join("");
 
 function captureWarnings(callback) {
@@ -49,11 +70,9 @@ function captureWarnings(callback) {
   }
 }
 
-function applyPatchTwice(source) {
-  const patched = applyChatgptCompleteHistoryPatch(source);
-  const second = captureWarnings(() =>
-    applyChatgptCompleteHistoryPatch(patched),
-  );
+function applyPatchTwice(apply, source) {
+  const patched = apply(source);
+  const second = captureWarnings(() => apply(patched));
   assert.equal(second.value, patched);
   assert.deepEqual(second.warnings, []);
   return patched;
@@ -81,295 +100,160 @@ function withFeatureConfig(enabled, callback) {
   }
 }
 
-test("feature is disabled until selected", () => {
+function assertParses(source, name) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));
+  try {
+    const file = path.join(tempDir, `${name}.mjs`);
+    fs.writeFileSync(file, source);
+    const result = childProcess.spawnSync(process.execPath, ["--check", file], {
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+test("feature is disabled until selected and exposes all three patches", () => {
   const featuresRoot = path.resolve(__dirname, "..");
   withFeatureConfig([], () => {
     assert.equal(
-      loadLinuxFeaturePatchDescriptors({ featuresRoot }).some(
-        (descriptor) =>
-          descriptor.id === "feature:chatgpt-complete-history:complete-history",
+      loadLinuxFeaturePatchDescriptors({ featuresRoot }).some((descriptor) =>
+        descriptor.id.startsWith("feature:chatgpt-complete-history:"),
       ),
       false,
     );
   });
   withFeatureConfig(["chatgpt-complete-history"], () => {
-    assert.equal(
-      loadLinuxFeaturePatchDescriptors({ featuresRoot }).some(
-        (descriptor) =>
-          descriptor.id === "feature:chatgpt-complete-history:complete-history",
-      ),
-      true,
+    assert.deepEqual(
+      loadLinuxFeaturePatchDescriptors({ featuresRoot })
+        .filter((descriptor) =>
+          descriptor.id.startsWith("feature:chatgpt-complete-history:"),
+        )
+        .map((descriptor) => descriptor.id),
+      [
+        "feature:chatgpt-complete-history:complete-history",
+        "feature:chatgpt-complete-history:cloud-projects",
+        "feature:chatgpt-complete-history:cloud-scheduled-runs",
+      ],
     );
   });
 });
 
-test("keeps regular, phone, and scheduled TPP conversations", () => {
-  const patched = applyPatchTwice(currentSource);
-  const context = {
-    Bxe: (conversation) => conversation.is_starred !== true,
-    PD: (id) => id,
-    limit: 5,
-    mD: (conversation) => conversation.gizmo_id ?? null,
-    zi: (config) => config,
-    zxe: (page) => page.items,
-  };
-  vm.runInNewContext(patched, context);
+test("keeps phone and scheduled TPP conversations in recent history", () => {
+  const patched = applyPatchTwice(
+    applyChatgptCompleteHistoryPatch,
+    sharedSource,
+  );
+  assert.equal(patched.includes(historyPatchMarker), true);
+  assert.equal(patched.includes(tppFeedPatchMarker), true);
+  assert.equal(patched.includes(hookExportPatchMarker), true);
+  assertParses(patched, "shared-history");
+
+  const runnable = patched.replace(
+    /\/\*codex-linux-chatgpt-source-export\*\/export\{[^;]+;/u,
+    "",
+  );
+  const context = {};
+  vm.runInNewContext(runnable, context);
   const conversations = [
-    { title: "Desktop", conversation_origin: null },
-    { title: "Phone", conversation_origin: "tpp" },
+    { id: "desktop", conversation_origin: null },
+    { id: "phone", conversation_origin: "tpp" },
     {
-      title: "Scheduled run",
+      id: "scheduled",
       conversation_origin: "tpp",
       is_automation_conversation: true,
     },
   ];
-
   assert.deepEqual(
     Array.from(
       context.historyTargets(
-        conversations.map((conversation, index) => ({
+        conversations.map((conversation) => ({
           kind: "recent",
           conversation,
-          conversationId: String(index),
-          recencyAt: index,
         })),
-        new Map(),
       ),
-    ).map((conversation) => conversation.title),
-    ["Desktop", "Phone", "Scheduled run"],
+    ).map((conversation) => conversation.id),
+    ["desktop", "phone", "scheduled"],
   );
   assert.deepEqual(
-    Array.from(context.recentConversations(conversations)).map(
-      (conversation) => conversation.title,
-    ),
-    ["Desktop", "Phone", "Scheduled run"],
+    Array.from(context.recent(conversations)).map(({ id }) => id),
+    ["desktop", "phone", "scheduled"],
   );
-  assert.equal(patched.includes(patchMarker), true);
-  assert.equal(patched.includes(tppFeedPatchMarker), true);
-  assert.equal(patched.includes(flatHistoryPatchMarker), true);
-  assert.equal(patched.includes(historyScrollPatchMarker), true);
-  assert.equal(patched.includes(projectMemoPatchMarker), true);
-});
-
-test("scrolls full history to its first section when opened", () => {
-  const patched = applyPatchTwice(currentSource);
-  let scrollOptions = null;
-  const historyTop = {
-    scrollIntoView(options) {
-      scrollOptions = options;
-    },
-  };
-  const context = {
-    A8: {
-      jsx: (type, props) => ({ props, type }),
-    },
-    Bxe: (conversation) => conversation.is_starred !== true,
-    O8: {
-      useEffect: (effect) => effect(),
-      useRef: () => ({ current: historyTop }),
-      useState: () => [true, () => {}],
-    },
-    PD: (id) => id,
-    limit: 5,
-    mD: (conversation) => conversation.gizmo_id ?? null,
-    requestAnimationFrame: (callback) => callback(),
-    zi: (config) => config,
-    zxe: (page) => page.items,
-  };
-  vm.runInNewContext(patched, context);
-
-  const result = context.quickChatProjectHistory(
-    "Untitled",
-    {
-      chatTargets: [],
-      pinnedTargets: [],
-      projectNamesById: new Map([["g-p-life", "life"]]),
-    },
-    {},
-    [],
-    [],
-    [],
-    context.O8,
-    context.A8,
-    false,
-    "history",
-    false,
-    "rows",
-  );
-
-  assert.equal(scrollOptions.block, "start");
-  assert.equal(result.props.ref.current, historyTop);
-});
-
-test("seeds project headings from the complete project-name map", () => {
-  const patched = applyPatchTwice(currentSource);
-  const context = {
-    Bxe: (conversation) => conversation.is_starred !== true,
-    PD: (id) => id,
-    limit: 5,
-    mD: (conversation) => conversation.gizmo_id ?? null,
-    zi: (config) => config,
-    zxe: (page) => page.items,
-  };
-  vm.runInNewContext(patched, context);
-
-  const history = Array.from(
-    context.historyTargets([], new Map([["g-p-life", "life"]])),
-  );
-
   assert.deepEqual(
-    history.map((conversation) => ({
-      conversationId: conversation.conversationId,
-      isProjectPlaceholder: conversation.isProjectPlaceholder,
-      projectId: conversation.projectId,
-      projectName: conversation.projectName,
-    })),
+    Array.from(
+      context.source({
+        flatConversationHistory: true,
+        generic: [conversations[0], conversations[1]],
+        tpp: [conversations[1], conversations[2]],
+      }).items,
+    ).map(({ id }) => id),
+    ["desktop", "phone", "scheduled"],
+  );
+});
+
+test("builds every ChatGPT cloud project row", () => {
+  assert.deepEqual(
+    buildCloudProjectRows(
+      new Map([
+        ["g-p-z", "zeta"],
+        ["g-p-life", "life"],
+      ]),
+    ).map(({ id, kind, name, projectId }) => ({ id, kind, name, projectId })),
     [
       {
-        conversationId: "codex-linux-project:g-p-life",
-        isProjectPlaceholder: true,
+        id: "chatgpt:g-p-life",
+        kind: "cloud",
+        name: "life",
         projectId: "g-p-life",
-        projectName: "life",
+      },
+      {
+        id: "chatgpt:g-p-z",
+        kind: "cloud",
+        name: "zeta",
+        projectId: "g-p-z",
       },
     ],
   );
 });
 
-test("merges the dedicated TPP feed into flat history without duplicates", () => {
-  const patched = applyPatchTwice(currentSource);
-  const context = {
-    Bxe: (conversation) => conversation.is_starred !== true,
-    PD: (id) => id,
-    limit: 5,
-    mD: (conversation) => conversation.gizmo_id ?? null,
-    zi: (config) => config,
-    zxe: (page) => page.items,
-  };
-  vm.runInNewContext(patched, context);
-  const desktop = { id: "desktop", title: "Desktop" };
+test("builds only scheduled ChatGPT cloud runs and deduplicates them", () => {
   const scheduled = {
     id: "scheduled",
     title: "Weekly Git CLI Exercise",
-    conversation_origin: "tpp",
     is_automation_conversation: true,
   };
-  const result = context.flatFeed(
-    true,
-    false,
-    true,
-    { data: { pages: [{ items: [desktop, scheduled] }] } },
-    { isError: false, isLoading: false },
-    [scheduled],
-  );
-
   assert.deepEqual(
-    Array.from(result.items).map((conversation) => conversation.id),
-    ["desktop", "scheduled"],
-  );
-});
-
-test("builds Scheduled, project, and recent history sections", () => {
-  const scheduled = {
-    conversationId: "scheduled",
-    isAutomationConversation: true,
-    projectId: null,
-    projectName: null,
-  };
-  const life = {
-    conversationId: "life-chat",
-    isAutomationConversation: false,
-    projectId: "g-p-life",
-    projectName: "life",
-  };
-  const recent = {
-    conversationId: "recent",
-    isAutomationConversation: false,
-    projectId: null,
-    projectName: null,
-  };
-  const emptyProject = {
-    conversationId: "codex-linux-project:g-p-empty",
-    isAutomationConversation: false,
-    isProjectPlaceholder: true,
-    projectId: "g-p-empty",
-    projectName: "empty",
-  };
-
-  const sections = buildQuickChatHistorySections([
-    scheduled,
-    life,
-    recent,
-    emptyProject,
-  ]);
-  assert.deepEqual(
-    sections.map((section) => [
-      section.kind,
-      section.label,
-      section.items.map((conversation) => conversation.conversationId),
+    buildCloudScheduledRuns([
+      { conversation: { id: "regular", title: "Regular" }, recencyAt: 30 },
+      { conversation: scheduled, conversationId: "scheduled", recencyAt: 20 },
+      { conversation: scheduled, conversationId: "scheduled", recencyAt: 40 },
     ]),
     [
-      ["scheduled", "Scheduled", ["scheduled"]],
-      ["project", "life", ["life-chat"]],
-      ["project", "empty", []],
-      ["recent", "Recent chats", ["recent"]],
+      {
+        conversationId: "scheduled",
+        recencyAt: 40,
+        title: "Weekly Git CLI Exercise",
+      },
     ],
   );
 });
 
-test("renders headings only in the full history view", () => {
-  const patched = applyPatchTwice(currentSource);
-  const context = {
-    $: "FormattedMessage",
-    Bxe: (conversation) => conversation.is_starred !== true,
-    PD: (id) => id,
-    limit: 5,
-    mD: (conversation) => conversation.gizmo_id ?? null,
-    u8: {
-      jsx: (type, props, key) => ({ key, props, type }),
-    },
-    zi: (config) => config,
-    zxe: (page) => page.items,
-  };
-  vm.runInNewContext(patched, context);
-  const conversations = [
-    {
-      isAutomationConversation: true,
-      projectId: null,
-      projectName: null,
-      title: "Weekly Git CLI Exercise",
-    },
-    {
-      isAutomationConversation: false,
-      projectId: "g-p-life",
-      projectName: "life",
-      title: "Life chat",
-    },
-    {
-      isAutomationConversation: false,
-      isProjectPlaceholder: true,
-      projectId: "g-p-empty",
-      projectName: "empty",
-      title: "empty",
-    },
-  ];
+test("patches the main Projects page instead of Quick Chat grouping", () => {
+  const patched = applyPatchTwice(applyMainProjectsPatch, projectsSource);
+  assert.equal(patched.includes(cloudProjectsPatchMarker), true);
+  assert.match(patched, /cloudRows:codexLinuxCloudProjectRows/u);
+  assert.match(patched, /codexLinuxCloudProjectRow/u);
+  assert.doesNotMatch(patched, /quickChat\.history\.(scheduled|recent)/u);
+  assertParses(patched, "cloud-projects");
+});
 
-  const full = Array.from(
-    context.renderHistory({ conversations, onNewChat: () => {} }),
-  );
-  assert.deepEqual(
-    full.map((entry) =>
-      typeof entry === "string"
-        ? entry
-        : typeof entry.props.children === "string"
-          ? entry.props.children
-          : entry.props.children.props.defaultMessage,
-    ),
-    ["Scheduled", "Weekly Git CLI Exercise", "life", "Life chat", "empty"],
-  );
-  assert.deepEqual(
-    Array.from(context.renderHistory({ conversations, onNewChat: null })),
-    ["Weekly Git CLI Exercise", "Life chat"],
-  );
+test("patches the main Scheduled page with cloud runs", () => {
+  const patched = applyPatchTwice(applyMainScheduledPatch, scheduledSource);
+  assert.equal(patched.includes(cloudScheduledPatchMarker), true);
+  assert.match(patched, /codexLinuxCloudScheduledRows/u);
+  assert.match(patched, /https:\/\/chatgpt\.com\/tasks/u);
+  assertParses(patched, "cloud-scheduled-runs");
 });
 
 test("conversation-list merging prefers the generic feed", () => {
@@ -382,77 +266,57 @@ test("conversation-list merging prefers the generic feed", () => {
   );
 });
 
-test("keeps every ChatGPT project visible and removes false overflow", () => {
-  const patched = applyPatchTwice(currentSource);
-  const context = { limit: 5 };
-  vm.runInNewContext(patched, context);
-  const result = context.visibleProjects(
-    ["one", "two", "three", "four", "five", "six", "seven"],
-    false,
-  );
-
-  assert.deepEqual(Array.from(result.visible), [
-    "one",
-    "two",
-    "three",
-    "four",
-    "five",
-    "six",
-    "seven",
-  ]);
-  assert.equal(result.hasOverflow, false);
+test("drift leaves each asset byte-identical", () => {
+  for (const [apply, source, warning] of [
+    [
+      applyChatgptCompleteHistoryPatch,
+      sharedSource.replace("return t!==`tpp`", "return t!=null"),
+      historyWarning,
+    ],
+    [
+      applyMainProjectsPatch,
+      projectsSource.replace("cloudRows:void 0", "cloudRows:[]"),
+      projectsWarning,
+    ],
+    [
+      applyMainScheduledPatch,
+      scheduledSource.replace("children:[M,N,U]", "children:[M,U]"),
+      scheduledWarning,
+    ],
+  ]) {
+    const result = captureWarnings(() => apply(source));
+    assert.equal(result.value, source);
+    assert.deepEqual(result.warnings, [warning]);
+  }
 });
 
-test("drift leaves the source byte-identical", () => {
-  const source = currentSource.replace("return t!==`tpp`", "return t!=null");
-  const result = captureWarnings(() =>
-    applyChatgptCompleteHistoryPatch(source),
-  );
-
-  assert.equal(result.value, source);
-  assert.deepEqual(result.warnings, [warning]);
-});
-
-test("a partial prior patch is rejected byte-identically", () => {
-  const source = currentSource.replace(
-    "if(r.kind!==`optimistic`",
-    `${patchMarker}if(!1&&r.kind!==\`optimistic\``,
-  );
-  const result = captureWarnings(() =>
-    applyChatgptCompleteHistoryPatch(source),
-  );
-
-  assert.equal(result.value, source);
-  assert.deepEqual(result.warnings, [warning]);
-});
-
-test("descriptor targets and patches the shared page chunk", () => {
+test("descriptors target and patch all three current page chunks", () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "chatgpt-complete-history-assets-"),
   );
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
-    const assetPath = path.join(
-      assetsDir,
-      "app-initial~app-main~page-current.js",
-    );
     fs.mkdirSync(assetsDir, { recursive: true });
-    fs.writeFileSync(assetPath, currentSource);
+    const fixtures = [
+      ["app-initial~app-main~page-current.js", sharedSource],
+      ["projects-index-page-current.js", projectsSource],
+      ["automations-page-current.js", scheduledSource],
+    ];
+    for (const [name, source] of fixtures) {
+      fs.writeFileSync(path.join(assetsDir, name), source);
+    }
 
-    assert.deepEqual(
-      patchAssetFiles(
-        tempDir,
-        descriptors[0].pattern,
-        descriptors[0].apply,
-        "missing",
-      ),
-      { matched: 1, changed: 1 },
-    );
-    assert.match(fs.readFileSync(assetPath, "utf8"), /complete-history/);
-    assert.equal(
-      descriptors[0].pattern.test("app-initial~app-main~other-current.js"),
-      false,
-    );
+    for (const descriptor of descriptors) {
+      assert.deepEqual(
+        patchAssetFiles(
+          tempDir,
+          descriptor.pattern,
+          descriptor.apply,
+          "missing",
+        ),
+        { matched: 1, changed: 1 },
+      );
+    }
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

@@ -1,21 +1,25 @@
 "use strict";
 
 const identifier = "[A-Za-z_$][\\w$]*";
-const patchMarker = "/*codex-linux-chatgpt-complete-history*/";
-const projectPatchMarker = "/*codex-linux-chatgpt-all-projects*/";
-const flatHistoryPatchMarker = "/*codex-linux-chatgpt-flat-history-sections*/";
+const historyPatchMarker = "/*codex-linux-chatgpt-complete-history*/";
 const tppFeedPatchMarker = "/*codex-linux-chatgpt-tpp-history-feed*/";
-const historyScrollPatchMarker = "/*codex-linux-chatgpt-history-scroll-top*/";
-const projectMemoPatchMarker = "/*codex-linux-chatgpt-project-names-memo*/";
-const warning =
-  "WARN: Could not find current ChatGPT history, TPP-feed, and project-section contracts - skipping complete history feature patch";
+const hookExportPatchMarker = "/*codex-linux-chatgpt-source-export*/";
+const cloudProjectsPatchMarker = "/*codex-linux-chatgpt-cloud-projects*/";
+const cloudScheduledPatchMarker =
+  "/*codex-linux-chatgpt-cloud-scheduled-runs*/";
+const historyWarning =
+  "WARN: Could not find current ChatGPT history and source-export contracts - skipping complete history feature patch";
+const projectsWarning =
+  "WARN: Could not find current main Projects cloud-row contracts - skipping complete history Projects patch";
+const scheduledWarning =
+  "WARN: Could not find current main Scheduled cloud-run contracts - skipping complete history Scheduled patch";
 
 const tppTargetFilterPattern = new RegExp(
   `if\\((${identifier})\\.kind!==\`optimistic\`&&\\1\\.conversation\\.conversation_origin===\`tpp\`\\)return\\[\\];`,
   "gu",
 );
 const patchedTppTargetFilterPattern = new RegExp(
-  `${escapeRegExp(patchMarker)}if\\(!1&&(${identifier})\\.kind!==\`optimistic\`&&\\1\\.conversation\\.conversation_origin===\`tpp\`\\)return\\[\\];`,
+  `${escapeRegExp(historyPatchMarker)}if\\(!1&&(${identifier})\\.kind!==\`optimistic\`&&\\1\\.conversation\\.conversation_origin===\`tpp\`\\)return\\[\\];`,
   "gu",
 );
 const tppPredicatePattern = new RegExp(
@@ -23,17 +27,11 @@ const tppPredicatePattern = new RegExp(
   "gu",
 );
 const patchedTppPredicatePattern = new RegExp(
-  `function (${identifier})\\((${identifier})\\)\\{let\\{conversation_origin:(${identifier})\\}=\\2;return \\3!==\`tpp\`\\|\\|\\3===\`tpp\`\\}`,
+  `${escapeRegExp(historyPatchMarker)}function (${identifier})\\((${identifier})\\)\\{let\\{conversation_origin:(${identifier})\\}=\\2;return!0\\}`,
   "gu",
 );
-const projectCollapsePattern = new RegExp(
-  `(${identifier})=(${identifier})\\.length>(${identifier}),(${identifier})=\\1&&!(${identifier})\\?\\2\\.filter\\((${identifier})\\):\\2`,
-  "gu",
-);
-const patchedProjectCollapsePattern = new RegExp(
-  `${escapeRegExp(projectPatchMarker)}(${identifier})=!1,(${identifier})=(${identifier})`,
-  "gu",
-);
+const sharedImportPattern =
+  /import\{([^{}]+)\}from"(\.\/app-initial~app-main~page-[^"]+\.js)";/gu;
 
 function mergeConversationLists(primary, secondary) {
   const ids = new Set(primary.map((conversation) => conversation.id));
@@ -43,55 +41,41 @@ function mergeConversationLists(primary, secondary) {
   ];
 }
 
-function buildQuickChatHistorySections(conversations) {
-  const scheduled = [];
-  const projects = new Map();
-  const recent = [];
+function buildCloudProjectRows(projectNamesById) {
+  return [...projectNamesById]
+    .map(([projectId, projectName]) => ({
+      id: `chatgpt:${projectId}`,
+      kind: "cloud",
+      modifiedAt: null,
+      name: projectName,
+      projectId,
+      sourceCount: 1,
+      sources: [],
+      sourceSearchText: "ChatGPT cloud",
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
 
-  for (const conversation of conversations) {
-    if (conversation.isAutomationConversation) {
-      scheduled.push(conversation);
-      continue;
+function buildCloudScheduledRuns(chatTargets) {
+  const runsById = new Map();
+  for (const target of chatTargets) {
+    const conversation = target.conversation;
+    if (conversation?.is_automation_conversation !== true) continue;
+    const conversationId = target.conversationId ?? conversation.id;
+    if (conversationId == null) continue;
+    const run = {
+      conversationId,
+      recencyAt: target.recencyAt ?? 0,
+      title: conversation.title?.trim() || "Scheduled ChatGPT task",
+    };
+    const previous = runsById.get(conversationId);
+    if (previous == null || previous.recencyAt < run.recencyAt) {
+      runsById.set(conversationId, run);
     }
-    if (conversation.projectId != null && conversation.projectName != null) {
-      const project = projects.get(conversation.projectId) ?? {
-        key: conversation.projectId,
-        kind: "project",
-        label: conversation.projectName,
-        items: [],
-      };
-      if (!conversation.isProjectPlaceholder) {
-        project.items.push(conversation);
-      }
-      projects.set(conversation.projectId, project);
-      continue;
-    }
-    recent.push(conversation);
   }
-
-  return [
-    ...(scheduled.length === 0
-      ? []
-      : [
-          {
-            key: "scheduled",
-            kind: "scheduled",
-            label: "Scheduled",
-            items: scheduled,
-          },
-        ]),
-    ...projects.values(),
-    ...(recent.length === 0
-      ? []
-      : [
-          {
-            key: "recent",
-            kind: "recent",
-            label: "Recent chats",
-            items: recent,
-          },
-        ]),
-  ];
+  return [...runsById.values()].sort(
+    (left, right) => right.recencyAt - left.recencyAt,
+  );
 }
 
 function escapeRegExp(value) {
@@ -109,79 +93,65 @@ function uniqueIndex(source, value) {
     : -1;
 }
 
+function applyEdits(source, edits) {
+  let patched = source;
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    patched =
+      patched.slice(0, edit.start) + edit.replacement + patched.slice(edit.end);
+  }
+  return patched;
+}
+
+function literalEdits(source, contracts) {
+  return contracts.map(([contract, replacement]) => {
+    const start = uniqueIndex(source, contract);
+    return { start, end: start + contract.length, replacement };
+  });
+}
+
+function replaceSharedImport(source, marker) {
+  const imports = matches(source, sharedImportPattern);
+  if (imports.length !== 1) return null;
+  const match = imports[0];
+  const replacement = `${marker}import{codexLinuxUseChatGptSource as codexLinuxUseChatGptSource,${match[1]}}from"${match[2]}";`;
+  return {
+    start: match.index,
+    end: match.index + match[0].length,
+    replacement,
+  };
+}
+
 function applyChatgptCompleteHistoryPatch(source) {
   const targetFilters = matches(source, tppTargetFilterPattern);
   const patchedTargetFilters = matches(source, patchedTppTargetFilterPattern);
   const predicates = matches(source, tppPredicatePattern);
   const patchedPredicates = matches(source, patchedTppPredicatePattern);
-  const projectCollapses = matches(source, projectCollapsePattern);
-  const patchedProjectCollapses = matches(
-    source,
-    patchedProjectCollapsePattern,
-  );
-  const hasFlatHistoryPatch = source.includes(flatHistoryPatchMarker);
-  const hasTppFeedPatch = source.includes(tppFeedPatchMarker);
-  const hasHistoryScrollPatch = source.includes(historyScrollPatchMarker);
-  const hasProjectMemoPatch = source.includes(projectMemoPatchMarker);
+  const hasFeedPatch = source.includes(tppFeedPatchMarker);
+  const hasHookExport = source.includes(hookExportPatchMarker);
 
   if (
     targetFilters.length === 0 &&
     patchedTargetFilters.length === 1 &&
     predicates.length === 0 &&
     patchedPredicates.length === 1 &&
-    projectCollapses.length === 0 &&
-    patchedProjectCollapses.length === 1 &&
-    hasFlatHistoryPatch &&
-    hasTppFeedPatch &&
-    hasHistoryScrollPatch &&
-    hasProjectMemoPatch
+    hasFeedPatch &&
+    hasHookExport
   ) {
     return source;
   }
 
-  if (
-    targetFilters.length !== 1 ||
-    patchedTargetFilters.length !== 0 ||
-    predicates.length !== 1 ||
-    patchedPredicates.length !== 0 ||
-    projectCollapses.length !== 1 ||
-    hasFlatHistoryPatch ||
-    hasTppFeedPatch ||
-    hasHistoryScrollPatch ||
-    hasProjectMemoPatch
-  ) {
-    console.warn(warning);
-    return source;
-  }
-
-  const predicateName = predicates[0][1];
-  const predicateUses = matches(
-    source,
-    new RegExp(`\\.filter\\(${escapeRegExp(predicateName)}\\)`, "gu"),
-  );
-  const [, overflowAlias, projectsAlias, projectLimitAlias, visibleAlias] =
-    projectCollapses[0];
-  const projectFilterAlias = projectCollapses[0][6];
-  const projectFilterContract = new RegExp(
-    `function ${escapeRegExp(projectFilterAlias)}\\((${identifier}),(${identifier})\\)\\{return \\2<${escapeRegExp(projectLimitAlias)}\\}`,
-    "gu",
-  );
-
-  const historyParameters =
-    "function Cve({optimisticConversationIdBySourceId:e,optimisticTitleByConversationId:t,recentFallbackTitle:n,sourceTargets:r}){return r.flatMap(r=>{";
-  const patchedHistoryParameters = `${flatHistoryPatchMarker}function Cve({optimisticConversationIdBySourceId:e,optimisticTitleByConversationId:t,recentFallbackTitle:n,sourceTargets:r,projectNamesById:codexLinuxProjectNamesById}){let codexLinuxHistoryItems=r.flatMap(r=>{`;
-  const historyProjection =
-    "let i=PD(r.conversationId),a=r.kind===`optimistic`?e.get(r.conversationId)??i:i;return[{conversationId:a,recencyAt:r.recencyAt,title:(r.kind===`optimistic`?t.get(a):r.conversation.title)?.trim()||n}]})}";
-  const patchedHistoryProjection =
-    "let i=PD(r.conversationId),a=r.kind===`optimistic`?e.get(r.conversationId)??i:i,o=r.kind===`optimistic`?r.projectId??null:mD(r.conversation);return[{conversationId:a,isAutomationConversation:r.kind!==`optimistic`&&r.conversation.is_automation_conversation===!0,isProjectPlaceholder:!1,projectId:o,projectName:o==null?null:codexLinuxProjectNamesById.get(o)??null,recencyAt:r.recencyAt,title:(r.kind===`optimistic`?t.get(a):r.conversation.title)?.trim()||n}]});for(const[codexLinuxProjectId,codexLinuxProjectName]of codexLinuxProjectNamesById)codexLinuxHistoryItems.some(e=>e.projectId===codexLinuxProjectId)||codexLinuxHistoryItems.push({conversationId:`codex-linux-project:${codexLinuxProjectId}`,isAutomationConversation:!1,isProjectPlaceholder:!0,projectId:codexLinuxProjectId,projectName:codexLinuxProjectName,recencyAt:Number.NEGATIVE_INFINITY,title:codexLinuxProjectName});return codexLinuxHistoryItems}";
-  const historyProjectionCall =
-    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets]}),we=PL(Ce)";
-  const patchedHistoryProjectionCall =
-    "recentFallbackTitle:e,sourceTargets:[...k.pinnedTargets,...k.chatTargets],projectNamesById:k.projectNamesById}),codexLinuxQuickChatProjectNamesByHistory.set(Ce,k.projectNamesById),we=PL(Ce)";
   const tppFeedEnable = "S=zi({enabled:l&&a,";
   const patchedTppFeedEnable = `${tppFeedPatchMarker}S=zi({enabled:l&&(a||i),`;
   const flatHistoryConversations =
     "O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[]";
+  const mergeHelperSource = mergeConversationLists
+    .toString()
+    .replace(
+      "function mergeConversationLists",
+      "function codexLinuxMergeConversationLists",
+    );
+  const historyHookAnchor = "function EH(e){";
+  const patchedHistoryHookAnchor = `${mergeHelperSource}${historyHookAnchor}`;
   const patchedFlatHistoryConversations =
     "O=l?a?(S.data??[]).filter(Bxe):i?codexLinuxMergeConversationLists((x.data?.pages??[]).flatMap(zxe),(S.data??[]).filter(Bxe)):(x.data?.pages??[]).flatMap(zxe):[]";
   const conversationError =
@@ -192,94 +162,139 @@ function applyChatgptCompleteHistoryPatch(source) {
     "isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)";
   const patchedConversationLoading =
     "isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading||i&&S.isLoading)";
-  const historyRows = "c=n.map(e)";
-  const patchedHistoryRows =
-    "c=a==null?n.filter(e=>!e.isProjectPlaceholder).map(e):codexLinuxRenderQuickChatHistorySections(n,e)";
-  const historyRendererAnchor = "function hPe(e){";
-  const projectMemoCondition =
-    "if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P){";
-  const patchedProjectMemoCondition = `${projectMemoPatchMarker}if(t[13]!==k.chatTargets||t[14]!==k.pinnedTargets||t[15]!==u||t[16]!==j||t[17]!==M||t[18]!==P||codexLinuxQuickChatProjectNamesByHistory.get(t[19])!==k.projectNamesById){`;
-  const historyViewState =
-    "[ye,be]=(0,O8.useState)(!1),[xe,Se]=(0,O8.useState)(!1),Ce,we;";
-  const patchedHistoryViewState =
-    "[ye,be]=(0,O8.useState)(!1),codexLinuxHistoryTopRef=(0,O8.useRef)(null);" +
-    `${historyScrollPatchMarker}(0,O8.useEffect)(()=>{ye&&requestAnimationFrame(()=>codexLinuxHistoryTopRef.current?.scrollIntoView({block:\`start\`}))},[ye]);` +
-    "let[xe,Se]=(0,O8.useState)(!1),Ce,we;";
-  const historyViewContainer =
-    '$t=(0,A8.jsx)(`div`,{"aria-hidden":Wt,className:Kt,inert:qt,children:Qt})';
-  const patchedHistoryViewContainer =
-    '$t=(0,A8.jsx)(`div`,{ref:codexLinuxHistoryTopRef,"aria-hidden":Wt,className:Kt,inert:qt,children:Qt})';
-  const mergeHelperSource = mergeConversationLists
-    .toString()
-    .replace(
-      "function mergeConversationLists",
-      "function codexLinuxMergeConversationLists",
-    );
-  const sectionHelperSource = buildQuickChatHistorySections
-    .toString()
-    .replace(
-      "function buildQuickChatHistorySections",
-      "function codexLinuxBuildQuickChatHistorySections",
-    );
-  const renderHelperSource =
-    "function codexLinuxRenderQuickChatHistorySections(e,t){return codexLinuxBuildQuickChatHistorySections(e).flatMap(e=>[(0,u8.jsx)(`li`,{className:`mt-4 px-1 text-sm font-medium text-token-text-tertiary`,children:e.kind===`scheduled`?(0,u8.jsx)($,{id:`quickChat.history.scheduled`,defaultMessage:`Scheduled`,description:`Heading for scheduled-run conversations in full Quick Chat history`}):e.kind===`recent`?(0,u8.jsx)($,{id:`quickChat.history.recent`,defaultMessage:`Recent chats`,description:`Heading for projectless conversations in full Quick Chat history`}):e.label},`codex-linux-history-section:${e.key}`),...e.items.map(t)])}";
-  const patchedHistoryRendererAnchor = `${mergeHelperSource}${sectionHelperSource}${renderHelperSource}const codexLinuxQuickChatProjectNamesByHistory=new WeakMap;${historyRendererAnchor}`;
-  const literalContracts = [
-    [historyParameters, patchedHistoryParameters],
-    [historyProjection, patchedHistoryProjection],
-    [historyProjectionCall, patchedHistoryProjectionCall],
+  const exportAnchor = "export{EQ as $,";
+  const patchedExportAnchor = `${hookExportPatchMarker}export{EH as codexLinuxUseChatGptSource,EQ as $,`;
+  const contracts = [
+    [historyHookAnchor, patchedHistoryHookAnchor],
     [tppFeedEnable, patchedTppFeedEnable],
     [flatHistoryConversations, patchedFlatHistoryConversations],
     [conversationError, patchedConversationError],
     [conversationLoading, patchedConversationLoading],
-    [historyRows, patchedHistoryRows],
-    [projectMemoCondition, patchedProjectMemoCondition],
-    [historyViewState, patchedHistoryViewState],
-    [historyViewContainer, patchedHistoryViewContainer],
-    [historyRendererAnchor, patchedHistoryRendererAnchor],
+    [exportAnchor, patchedExportAnchor],
   ];
 
   if (
-    predicateUses.length !== 1 ||
-    matches(source, projectFilterContract).length !== 1 ||
-    literalContracts.some(([contract]) => uniqueIndex(source, contract) < 0)
+    targetFilters.length !== 1 ||
+    patchedTargetFilters.length !== 0 ||
+    predicates.length !== 1 ||
+    patchedPredicates.length !== 0 ||
+    hasFeedPatch ||
+    hasHookExport ||
+    contracts.some(([contract]) => uniqueIndex(source, contract) < 0)
   ) {
-    console.warn(warning);
+    console.warn(historyWarning);
     return source;
   }
 
+  const predicate = predicates[0];
   const edits = [
     {
       start: targetFilters[0].index,
       end: targetFilters[0].index + targetFilters[0][0].length,
-      replacement: `${patchMarker}${targetFilters[0][0].replace("if(", "if(!1&&")}`,
+      replacement: `${historyPatchMarker}${targetFilters[0][0].replace("if(", "if(!1&&")}`,
     },
     {
-      start: predicates[0].index,
-      end: predicates[0].index + predicates[0][0].length,
-      replacement: predicates[0][0].replace(
-        "!==`tpp`}",
-        "!==`tpp`||" + predicates[0][3] + "===`tpp`}",
-      ),
+      start: predicate.index,
+      end: predicate.index + predicate[0].length,
+      replacement: `${historyPatchMarker}function ${predicate[1]}(${predicate[2]}){let{conversation_origin:${predicate[3]}}=${predicate[2]};return!0}`,
     },
-    {
-      start: projectCollapses[0].index,
-      end: projectCollapses[0].index + projectCollapses[0][0].length,
-      replacement: `${projectPatchMarker}${overflowAlias}=!1,${visibleAlias}=${projectsAlias}`,
-    },
+    ...literalEdits(source, contracts),
+  ];
+  return applyEdits(source, edits);
+}
+
+function applyMainProjectsPatch(source) {
+  const hasPatch = source.includes(cloudProjectsPatchMarker);
+  const hasImport = source.includes(
+    "codexLinuxUseChatGptSource as codexLinuxUseChatGptSource",
+  );
+  if (hasPatch && hasImport) return source;
+
+  const importEdit = replaceSharedImport(source, cloudProjectsPatchMarker);
+  const helperAnchor = "function pn(){";
+  const hookContract =
+    "let{groups:s,hasLoadedWorkspaceRootOptions:c,isWorkspaceRootOptionsLoading:l}=w(R,o),[u,d]=(0,Q.useState)(``)";
+  const patchedHookContract =
+    "let{groups:s,hasLoadedWorkspaceRootOptions:c,isWorkspaceRootOptionsLoading:l}=w(R,o),codexLinuxChatGptSource=codexLinuxUseChatGptSource(),codexLinuxCloudProjectRows=codexLinuxBuildCloudProjectRows(codexLinuxChatGptSource.projectNamesById),[u,d]=(0,Q.useState)(``)";
+  const memoContract =
+    "if(e[4]!==y||e[5]!==c||e[6]!==t||e[7]!==l||e[8]!==i||e[9]!==u||e[10]!==g||e[11]!==x||e[12]!==_||e[13]!==m||e[14]!==f||e[15]!==T||e[16]!==v||e[17]!==s){";
+  const patchedMemoContract = `if(!0||e[4]!==y||e[5]!==c||e[6]!==t||e[7]!==l||e[8]!==i||e[9]!==u||e[10]!==g||e[11]!==x||e[12]!==_||e[13]!==m||e[14]!==f||e[15]!==T||e[16]!==v||e[17]!==s){`;
+  const rowsContract = "cloudRows:void 0,groups:s";
+  const patchedRowsContract = "cloudRows:codexLinuxCloudProjectRows,groups:s";
+  const emptyContract = "r=c&&!l&&s.length===0";
+  const patchedEmptyContract =
+    "r=c&&!l&&s.length===0&&codexLinuxCloudProjectRows.length===0";
+  const renderContract =
+    "return e.kind===`cloud`?null:(0,$.jsx)(yn,{expanded:t,onShowAllChange:t=>q(e.projectId,t),onToggleExpanded:()=>G(e.id),row:e,showAll:x.has(e.projectId)},e.id)";
+  const patchedRenderContract =
+    "return e.kind===`cloud`?(0,$.jsx)(codexLinuxCloudProjectRow,{row:e},e.id):(0,$.jsx)(yn,{expanded:t,onShowAllChange:t=>q(e.projectId,t),onToggleExpanded:()=>G(e.id),row:e,showAll:x.has(e.projectId)},e.id)";
+  const buildHelperSource = buildCloudProjectRows
+    .toString()
+    .replace(
+      "function buildCloudProjectRows",
+      "function codexLinuxBuildCloudProjectRows",
+    );
+  const rowHelperSource =
+    'function codexLinuxCloudProjectRow({row:e}){let t=`https://chatgpt.com/g/${encodeURIComponent(e.projectId)}/project`;return(0,$.jsx)(`a`,{href:t,target:`_blank`,rel:`noreferrer`,"data-project-row":!0,className:`grid min-h-[70px] grid-cols-[minmax(0,1fr)_minmax(8rem,.8fr)_minmax(5rem,.35fr)_auto] items-center gap-4 border-b border-token-border px-0 py-2 text-base hover:bg-token-list-hover-background`,children:(0,$.jsxs)($.Fragment,{children:[(0,$.jsx)(`span`,{className:`min-w-0 truncate text-token-foreground`,children:e.name}),(0,$.jsx)(`span`,{className:`text-token-text-secondary`,children:`ChatGPT cloud`}),(0,$.jsx)(`span`,{className:`text-token-description-foreground`,children:`—`}),(0,$.jsx)(`span`,{className:`pr-2 text-sm text-token-text-secondary`,children:`Open`})]})})}';
+  const contracts = [
+    [helperAnchor, `${buildHelperSource}${rowHelperSource}${helperAnchor}`],
+    [hookContract, patchedHookContract],
+    [memoContract, patchedMemoContract],
+    [rowsContract, patchedRowsContract],
+    [emptyContract, patchedEmptyContract],
+    [renderContract, patchedRenderContract],
   ];
 
-  for (const [contract, replacement] of literalContracts) {
-    const start = uniqueIndex(source, contract);
-    edits.push({ start, end: start + contract.length, replacement });
+  if (
+    hasPatch ||
+    hasImport ||
+    importEdit == null ||
+    contracts.some(([contract]) => uniqueIndex(source, contract) < 0)
+  ) {
+    console.warn(projectsWarning);
+    return source;
   }
+  return applyEdits(source, [importEdit, ...literalEdits(source, contracts)]);
+}
 
-  let patched = source;
-  for (const edit of edits.sort((left, right) => right.start - left.start)) {
-    patched =
-      patched.slice(0, edit.start) + edit.replacement + patched.slice(edit.end);
+function applyMainScheduledPatch(source) {
+  const hasPatch = source.includes(cloudScheduledPatchMarker);
+  const hasImport = source.includes(
+    "codexLinuxUseChatGptSource as codexLinuxUseChatGptSource",
+  );
+  if (hasPatch && hasImport) return source;
+
+  const importEdit = replaceSharedImport(source, cloudScheduledPatchMarker);
+  const helperAnchor = "function ei(e){";
+  const emptyPageContract = "children:e.length===0?(0,$.jsx)(li,{";
+  const patchedEmptyPageContract = "children:e.length===0&&a?(0,$.jsx)(li,{";
+  const pageChildrenContract = "children:[M,N,U]";
+  const patchedPageChildrenContract =
+    "children:[M,(0,Z.jsx)(codexLinuxCloudScheduledRows,{}),N,U]";
+  const buildHelperSource = buildCloudScheduledRuns
+    .toString()
+    .replace(
+      "function buildCloudScheduledRuns",
+      "function codexLinuxBuildCloudScheduledRuns",
+    );
+  const rowsHelperSource =
+    "function codexLinuxCloudScheduledRows(){let e=codexLinuxUseChatGptSource({tppOnly:!0}),t=codexLinuxBuildCloudScheduledRuns(e.chatTargets),n=(0,Z.jsx)(`a`,{href:`https://chatgpt.com/tasks`,target:`_blank`,rel:`noreferrer`,className:`text-sm text-token-text-link-foreground hover:underline`,children:`Manage in ChatGPT`}),r=e.isConversationLoading?(0,Z.jsx)(`div`,{className:`py-4 text-sm text-token-description-foreground`,children:`Loading ChatGPT cloud tasks…`}):e.isConversationError?(0,Z.jsx)(`div`,{className:`py-4 text-sm text-token-error-foreground`,children:`Could not load ChatGPT cloud tasks`}):t.length===0?(0,Z.jsx)(`div`,{className:`py-4 text-sm text-token-description-foreground`,children:`No synced ChatGPT scheduled runs yet`}):(0,Z.jsx)(`div`,{className:`flex flex-col gap-1`,role:`list`,children:t.map(e=>(0,Z.jsx)(`a`,{href:`/work/conversation/${encodeURIComponent(e.conversationId)}`,className:`flex min-h-14 items-center justify-between gap-4 rounded-lg px-3 py-2 hover:bg-token-list-hover-background`,role:`listitem`,children:(0,Z.jsxs)(Z.Fragment,{children:[(0,Z.jsx)(`span`,{className:`min-w-0 truncate text-token-foreground`,children:e.title}),(0,Z.jsx)(`span`,{className:`shrink-0 text-sm text-token-description-foreground`,children:`ChatGPT cloud run`})]})},e.conversationId))});return(0,Z.jsxs)(`section`,{className:`mb-5 border-b border-token-border pb-5`,children:[(0,Z.jsxs)(`div`,{className:`mb-2 flex items-center justify-between gap-3`,children:[(0,Z.jsx)(`h2`,{className:`text-base font-medium text-token-foreground`,children:`ChatGPT cloud`} ),n]}),r]})}";
+  const contracts = [
+    [helperAnchor, `${buildHelperSource}${rowsHelperSource}${helperAnchor}`],
+    [emptyPageContract, patchedEmptyPageContract],
+    [pageChildrenContract, patchedPageChildrenContract],
+  ];
+
+  if (
+    hasPatch ||
+    hasImport ||
+    importEdit == null ||
+    contracts.some(([contract]) => uniqueIndex(source, contract) < 0)
+  ) {
+    console.warn(scheduledWarning);
+    return source;
   }
-  return patched;
+  return applyEdits(source, [importEdit, ...literalEdits(source, contracts)]);
 }
 
 const descriptors = [
@@ -289,22 +304,46 @@ const descriptors = [
     order: 20_750,
     ciPolicy: "optional",
     pattern: /^app-initial~app-main~page-.*\.js$/,
-    missingDescription: "shared ChatGPT history and project bundle",
+    missingDescription: "shared ChatGPT history bundle",
     skipDescription: "complete ChatGPT history feature patch",
     apply: applyChatgptCompleteHistoryPatch,
+  },
+  {
+    id: "cloud-projects",
+    phase: "webview-asset",
+    order: 20_751,
+    ciPolicy: "optional",
+    pattern: /^projects-index-page-.*\.js$/,
+    missingDescription: "main Projects page bundle",
+    skipDescription: "ChatGPT cloud Projects feature patch",
+    apply: applyMainProjectsPatch,
+  },
+  {
+    id: "cloud-scheduled-runs",
+    phase: "webview-asset",
+    order: 20_752,
+    ciPolicy: "optional",
+    pattern: /^automations-page-.*\.js$/,
+    missingDescription: "main Scheduled page bundle",
+    skipDescription: "ChatGPT cloud Scheduled feature patch",
+    apply: applyMainScheduledPatch,
   },
 ];
 
 module.exports = {
   applyChatgptCompleteHistoryPatch,
-  buildQuickChatHistorySections,
+  applyMainProjectsPatch,
+  applyMainScheduledPatch,
+  buildCloudProjectRows,
+  buildCloudScheduledRuns,
+  cloudProjectsPatchMarker,
+  cloudScheduledPatchMarker,
   descriptors,
-  flatHistoryPatchMarker,
-  historyScrollPatchMarker,
+  historyPatchMarker,
+  historyWarning,
+  hookExportPatchMarker,
   mergeConversationLists,
-  patchMarker,
-  projectMemoPatchMarker,
-  projectPatchMarker,
+  projectsWarning,
+  scheduledWarning,
   tppFeedPatchMarker,
-  warning,
 };
