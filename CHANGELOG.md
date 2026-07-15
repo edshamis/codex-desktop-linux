@@ -7,12 +7,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
-- An opt-in `chatgpt-complete-history` feature shows TPP phone conversations,
-  merges the dedicated TPP feed into Quick Chat history, adds every ChatGPT
-  cloud project to the main Projects page, and adds cloud scheduled runs plus a
-  task-manager link to the main Scheduled page. Cloud project rows reuse the
-  native responsive Projects table grid, and all cloud rows stay separate from
-  local Codex project and automation mutation handlers.
+- An opt-in `chatgpt-complete-history` feature shows TPP phone conversations and
+  merges the dedicated TPP feed into Quick Chat history without changing the
+  main Projects or Scheduled pages.
 - A shared upstream DMG acceptance profile now produces the same structured
   decision for local installs, updater rebuilds, and scheduled CI. Scheduled
   rejections create one fingerprinted drift issue and supersede issues for
@@ -222,8 +219,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `CODEX_CLI_PATH`.
 - The in-app updater no longer quits into a broken `pkexec` install path when a
   minimal window-manager session has no graphical polkit authentication agent;
-  it keeps the rebuilt package ready and reports a terminal `sudo
-/usr/bin/codex-update-manager ... --path ...` command instead.
+  it keeps the rebuilt package ready and reports a terminal `sudo /usr/bin/codex-update-manager ... --path ...` command instead.
 - The opt-in Linux AppShots bare-modifier shortcuts now require left and right
   modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
   key from opening AppShots.

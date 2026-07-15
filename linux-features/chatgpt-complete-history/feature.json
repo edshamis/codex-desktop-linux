@@ -1,7 +1,7 @@
 {
   "id": "chatgpt-complete-history",
   "title": "ChatGPT Complete History",
-  "description": "Show phone chats in Quick Chat and surface ChatGPT cloud projects and scheduled runs on their main pages.",
+  "description": "Show phone-created and other TPP conversations in desktop ChatGPT history.",
   "defaultEnabled": false,
   "entrypoints": {
     "patchDescriptors": "./patch.js"

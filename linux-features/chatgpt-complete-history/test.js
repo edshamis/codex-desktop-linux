@@ -15,19 +15,10 @@ const {
 const { patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const {
   applyChatgptCompleteHistoryPatch,
-  applyMainProjectsPatch,
-  applyMainScheduledPatch,
-  buildCloudProjectRows,
-  buildCloudScheduledRuns,
-  cloudProjectsPatchMarker,
-  cloudScheduledPatchMarker,
   descriptors,
   historyPatchMarker,
   historyWarning,
-  hookExportPatchMarker,
   mergeConversationLists,
-  projectsWarning,
-  scheduledWarning,
   tppFeedPatchMarker,
 } = require("./patch.js");
 
@@ -42,21 +33,6 @@ const sharedSource = [
   "const EQ=1;",
   "globalThis.historyTargets=Cve;globalThis.recent=recent;globalThis.source=EH;",
   "export{EQ as $,};",
-].join("");
-
-const projectsSource = [
-  'import{In as ht}from"./app-initial~app-main~page-current.js";',
-  "function pn(){let e=[],t,r,i,o,w,R,Q,f,p,m,h,g,_,v,y=new Set,b,x=new Set,S,C,T,E,D,O,A,j,M,N,P,F,I,L,z,B,q,G;",
-  "let{groups:s,hasLoadedWorkspaceRootOptions:c,isWorkspaceRootOptionsLoading:l}=w(R,o),[u,d]=(0,Q.useState)(``);",
-  "if(e[4]!==y||e[5]!==c||e[6]!==t||e[7]!==l||e[8]!==i||e[9]!==u||e[10]!==g||e[11]!==x||e[12]!==_||e[13]!==m||e[14]!==f||e[15]!==T||e[16]!==v||e[17]!==s){",
-  "let n=Wt({cloudRows:void 0,groups:s,projectWritableRoots:[],query:u,sortDirection:m,sortKey:f,tasks:T}),r=c&&!l&&s.length===0;",
-  "return n.map(e=>{let t=y.has(e.id);return e.kind===`cloud`?null:(0,$.jsx)(yn,{expanded:t,onShowAllChange:t=>q(e.projectId,t),onToggleExpanded:()=>G(e.id),row:e,showAll:x.has(e.projectId)},e.id)})}}",
-].join("");
-
-const scheduledSource = [
-  'import{In as ht}from"./app-initial~app-main~page-current.js";',
-  "function ei(e){let M,N,U;return(0,Z.jsx)(`main`,{children:[M,N,U]})}",
-  "function oi(){let e=[];return(0,$.jsx)(`div`,{children:e.length===0?(0,$.jsx)(li,{empty:!0}):(0,$.jsx)(ei,{automations:e})})}",
 ].join("");
 
 function captureWarnings(callback) {
@@ -114,7 +90,7 @@ function assertParses(source, name) {
   }
 }
 
-test("feature is disabled until selected and exposes all three patches", () => {
+test("feature is disabled until selected and exposes only history patching", () => {
   const featuresRoot = path.resolve(__dirname, "..");
   withFeatureConfig([], () => {
     assert.equal(
@@ -131,11 +107,7 @@ test("feature is disabled until selected and exposes all three patches", () => {
           descriptor.id.startsWith("feature:chatgpt-complete-history:"),
         )
         .map((descriptor) => descriptor.id),
-      [
-        "feature:chatgpt-complete-history:complete-history",
-        "feature:chatgpt-complete-history:cloud-projects",
-        "feature:chatgpt-complete-history:cloud-scheduled-runs",
-      ],
+      ["feature:chatgpt-complete-history:complete-history"],
     );
   });
 });
@@ -147,13 +119,9 @@ test("keeps phone and scheduled TPP conversations in recent history", () => {
   );
   assert.equal(patched.includes(historyPatchMarker), true);
   assert.equal(patched.includes(tppFeedPatchMarker), true);
-  assert.equal(patched.includes(hookExportPatchMarker), true);
   assertParses(patched, "shared-history");
 
-  const runnable = patched.replace(
-    /\/\*codex-linux-chatgpt-source-export\*\/export\{[^;]+;/u,
-    "",
-  );
+  const runnable = patched.replace(/export\{[^;]+;/u, "");
   const context = {};
   vm.runInNewContext(runnable, context);
   const conversations = [
@@ -192,76 +160,6 @@ test("keeps phone and scheduled TPP conversations in recent history", () => {
   );
 });
 
-test("builds every ChatGPT cloud project row", () => {
-  assert.deepEqual(
-    buildCloudProjectRows(
-      new Map([
-        ["g-p-z", "zeta"],
-        ["g-p-life", "life"],
-      ]),
-    ).map(({ id, kind, name, projectId }) => ({ id, kind, name, projectId })),
-    [
-      {
-        id: "chatgpt:g-p-life",
-        kind: "cloud",
-        name: "life",
-        projectId: "g-p-life",
-      },
-      {
-        id: "chatgpt:g-p-z",
-        kind: "cloud",
-        name: "zeta",
-        projectId: "g-p-z",
-      },
-    ],
-  );
-});
-
-test("builds only scheduled ChatGPT cloud runs and deduplicates them", () => {
-  const scheduled = {
-    id: "scheduled",
-    title: "Weekly Git CLI Exercise",
-    is_automation_conversation: true,
-  };
-  assert.deepEqual(
-    buildCloudScheduledRuns([
-      { conversation: { id: "regular", title: "Regular" }, recencyAt: 30 },
-      { conversation: scheduled, conversationId: "scheduled", recencyAt: 20 },
-      { conversation: scheduled, conversationId: "scheduled", recencyAt: 40 },
-    ]),
-    [
-      {
-        conversationId: "scheduled",
-        recencyAt: 40,
-        title: "Weekly Git CLI Exercise",
-      },
-    ],
-  );
-});
-
-test("patches the main Projects page instead of Quick Chat grouping", () => {
-  const patched = applyPatchTwice(applyMainProjectsPatch, projectsSource);
-  assert.equal(patched.includes(cloudProjectsPatchMarker), true);
-  assert.match(patched, /cloudRows:codexLinuxCloudProjectRows/u);
-  assert.match(patched, /codexLinuxCloudProjectRow/u);
-  assert.match(patched, /className:k\(tn,/u);
-  assert.match(patched, /max-\[920px\]:hidden/u);
-  assert.doesNotMatch(
-    patched,
-    /grid-cols-\[minmax\(0,1fr\)_minmax\(8rem,.8fr\)/u,
-  );
-  assert.doesNotMatch(patched, /quickChat\.history\.(scheduled|recent)/u);
-  assertParses(patched, "cloud-projects");
-});
-
-test("patches the main Scheduled page with cloud runs", () => {
-  const patched = applyPatchTwice(applyMainScheduledPatch, scheduledSource);
-  assert.equal(patched.includes(cloudScheduledPatchMarker), true);
-  assert.match(patched, /codexLinuxCloudScheduledRows/u);
-  assert.match(patched, /https:\/\/chatgpt\.com\/tasks/u);
-  assertParses(patched, "cloud-scheduled-runs");
-});
-
 test("conversation-list merging prefers the generic feed", () => {
   assert.deepEqual(
     mergeConversationLists(
@@ -273,44 +171,25 @@ test("conversation-list merging prefers the generic feed", () => {
 });
 
 test("drift leaves each asset byte-identical", () => {
-  for (const [apply, source, warning] of [
-    [
-      applyChatgptCompleteHistoryPatch,
-      sharedSource.replace("return t!==`tpp`", "return t!=null"),
-      historyWarning,
-    ],
-    [
-      applyMainProjectsPatch,
-      projectsSource.replace("cloudRows:void 0", "cloudRows:[]"),
-      projectsWarning,
-    ],
-    [
-      applyMainScheduledPatch,
-      scheduledSource.replace("children:[M,N,U]", "children:[M,U]"),
-      scheduledWarning,
-    ],
-  ]) {
-    const result = captureWarnings(() => apply(source));
-    assert.equal(result.value, source);
-    assert.deepEqual(result.warnings, [warning]);
-  }
+  const source = sharedSource.replace("return t!==`tpp`", "return t!=null");
+  const result = captureWarnings(() =>
+    applyChatgptCompleteHistoryPatch(source),
+  );
+  assert.equal(result.value, source);
+  assert.deepEqual(result.warnings, [historyWarning]);
 });
 
-test("descriptors target and patch all three current page chunks", () => {
+test("descriptor targets only the shared history chunk", () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "chatgpt-complete-history-assets-"),
   );
   try {
     const assetsDir = path.join(tempDir, "webview", "assets");
     fs.mkdirSync(assetsDir, { recursive: true });
-    const fixtures = [
-      ["app-initial~app-main~page-current.js", sharedSource],
-      ["projects-index-page-current.js", projectsSource],
-      ["automations-page-current.js", scheduledSource],
-    ];
-    for (const [name, source] of fixtures) {
-      fs.writeFileSync(path.join(assetsDir, name), source);
-    }
+    fs.writeFileSync(
+      path.join(assetsDir, "app-initial~app-main~page-current.js"),
+      sharedSource,
+    );
 
     for (const descriptor of descriptors) {
       assert.deepEqual(
