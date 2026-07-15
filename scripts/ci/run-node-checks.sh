@@ -23,6 +23,7 @@ run_node_syntax_checks() {
 
 run_node_tests() {
     local file
+    local -a node_test_args=(--test)
     local -a test_files=()
 
     node scripts/ci/manage-labels.js --check
@@ -35,7 +36,13 @@ run_node_tests() {
         return 0
     fi
 
-    node --test "${test_files[@]}"
+    if [ -n "${NODE_TEST_REPORTER:-}" ]; then
+        node_test_args+=(--test-reporter="$NODE_TEST_REPORTER")
+    elif [ "${GITHUB_ACTIONS:-}" = "true" ] && node --help | grep -q -- "--test-reporter"; then
+        node_test_args+=(--test-reporter=dot)
+    fi
+
+    node "${node_test_args[@]}" "${test_files[@]}"
 }
 
 case "$MODE" in
