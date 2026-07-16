@@ -7,6 +7,7 @@ use std::{
     io::{self, BufRead, BufReader, ErrorKind, Read, Seek, SeekFrom, Write},
     net::Shutdown,
     os::unix::{
+        ffi::OsStrExt,
         fs::{MetadataExt, PermissionsExt},
         io::AsRawFd,
         net::{UnixListener, UnixStream},
@@ -27,6 +28,7 @@ const HOST_NAME: &str = "com.openai.codexextension";
 const SOCKET_DIR_ENV: &str = "CODEX_BROWSER_USE_SOCKET_DIR";
 const SESSIONS_DIR_ENV: &str = "CODEX_BROWSER_USE_SESSIONS_DIR";
 const SOCKET_DIR_NAME: &str = "codex-browser-use";
+const MAX_UNIX_SOCKET_PATH_BYTES: usize = 107;
 const ROLLOUT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const OBSERVED_TURN_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const ROLLOUT_SEARCH_MAX_DEPTH: usize = 5;
@@ -330,9 +332,10 @@ impl RolloutTracker {
 }
 
 fn main() -> Result<()> {
-    let socket_dir = socket_dir();
+    let effective_uid = unsafe { libc::geteuid() };
+    let socket_dir = socket_dir(effective_uid);
+    let socket_path = socket_path(&socket_dir)?;
     prepare_socket_dir(&socket_dir)?;
-    let socket_path = socket_path(&socket_dir);
     remove_socket_if_present(&socket_path)?;
 
     let listener = UnixListener::bind(&socket_path)
@@ -364,21 +367,16 @@ fn main() -> Result<()> {
     result
 }
 
-fn socket_dir() -> PathBuf {
+fn socket_dir(effective_uid: u32) -> PathBuf {
     if let Some(path) = env::var_os(SOCKET_DIR_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(path);
     }
 
-    let runtime_dir = env::var_os("XDG_RUNTIME_DIR");
-    default_socket_dir(runtime_dir.as_deref(), unsafe { libc::geteuid() })
+    default_socket_dir(effective_uid)
 }
 
-fn default_socket_dir(runtime_dir: Option<&std::ffi::OsStr>, effective_uid: u32) -> PathBuf {
-    runtime_dir
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .map(|path| path.join(SOCKET_DIR_NAME))
-        .unwrap_or_else(|| PathBuf::from(format!("/tmp/{SOCKET_DIR_NAME}-{effective_uid}")))
+fn default_socket_dir(effective_uid: u32) -> PathBuf {
+    PathBuf::from(format!("/tmp/{SOCKET_DIR_NAME}-{effective_uid}"))
 }
 
 fn sessions_root() -> Option<PathBuf> {
@@ -408,12 +406,23 @@ fn is_extension_id(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| matches!(byte, b'a'..=b'p'))
 }
 
-fn socket_path(socket_dir: &Path) -> PathBuf {
+fn socket_path(socket_dir: &Path) -> Result<PathBuf> {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or_default();
-    socket_dir.join(format!("extension-{}-{nonce}.sock", process::id()))
+    socket_path_for(socket_dir, process::id(), nonce)
+}
+
+fn socket_path_for(socket_dir: &Path, process_id: u32, nonce: u128) -> Result<PathBuf> {
+    let path = socket_dir.join(format!("extension-{process_id}-{nonce}.sock"));
+    if path.as_os_str().as_bytes().len() > MAX_UNIX_SOCKET_PATH_BYTES {
+        bail!(
+            "unix socket path exceeds the {MAX_UNIX_SOCKET_PATH_BYTES}-byte Linux limit: {}",
+            path.display()
+        );
+    }
+    Ok(path)
 }
 
 fn prepare_socket_dir(path: &Path) -> Result<()> {
@@ -1039,19 +1048,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn socket_directory_prefers_the_per_user_runtime_directory() {
+    fn socket_directory_default_is_scoped_by_uid() {
         assert_eq!(
-            default_socket_dir(Some(std::ffi::OsStr::new("/run/user/1000")), 1000),
-            PathBuf::from("/run/user/1000/codex-browser-use")
+            default_socket_dir(1000),
+            PathBuf::from("/tmp/codex-browser-use-1000")
         );
     }
 
     #[test]
-    fn socket_directory_fallback_is_scoped_by_uid() {
+    fn complete_socket_path_is_guarded_against_the_linux_limit() {
+        let short = socket_path_for(Path::new("/tmp/codex-browser-use-1000"), 42, 7).unwrap();
         assert_eq!(
-            default_socket_dir(None, 1000),
-            PathBuf::from("/tmp/codex-browser-use-1000")
+            short,
+            PathBuf::from("/tmp/codex-browser-use-1000/extension-42-7.sock")
         );
+
+        let long_dir = PathBuf::from("/tmp").join("x".repeat(MAX_UNIX_SOCKET_PATH_BYTES));
+        let error = socket_path_for(&long_dir, 42, 7).unwrap_err();
+        assert!(error.to_string().contains("unix socket path exceeds"));
     }
 
     #[test]

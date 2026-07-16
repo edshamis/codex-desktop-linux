@@ -7,12 +7,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const vm = require("node:vm");
 const { pathToFileURL } = require("node:url");
 
 const patcher = path.join(__dirname, "patch-browser-client-iab-socket-scope.js");
 
-test("Linux socket discovery uses the override, runtime directory, then UID fallback", () => {
+test("Linux socket discovery uses the bridge override then a deterministic UID path", async () => {
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "codex-user-socket-dir-"));
   const clientPath = path.join(workspace, "browser-client.mjs");
   const fixture =
@@ -26,22 +25,29 @@ test("Linux socket discovery uses the override, runtime directory, then UID fall
     assert.equal(firstPatch.status, 0, firstPatch.stderr);
     const patched = fs.readFileSync(clientPath, "utf8");
     assert.match(patched, /codexLinuxPerUserBrowserSocketDir/);
+    assert.doesNotMatch(patched, /\bprocess\./);
 
-    const resolve = (env, uid = 1000) => {
-      const context = { process: { env, getuid: () => uid } };
-      context.globalThis = context;
-      vm.runInNewContext(patched, context);
-      return context.result;
+    let importIndex = 0;
+    const resolve = async (env) => {
+      globalThis.nodeRepl = { env };
+      delete globalThis.result;
+      await import(`${pathToFileURL(clientPath).href}?socket-case=${importIndex++}`);
+      return globalThis.result;
     };
     assert.equal(
-      resolve({ CODEX_BROWSER_USE_SOCKET_DIR: "/custom/browser-sockets" }),
+      await resolve({ CODEX_BROWSER_USE_SOCKET_DIR: "/custom/browser-sockets" }),
       "/custom/browser-sockets",
     );
+    const expectedDefault = `/tmp/codex-browser-use-${os.userInfo().uid}`;
     assert.equal(
-      resolve({ XDG_RUNTIME_DIR: "/run/user/1000/" }),
-      "/run/user/1000/codex-browser-use",
+      await resolve({ XDG_RUNTIME_DIR: "/run/user/1000/" }),
+      expectedDefault,
     );
-    assert.equal(resolve({}, 1001), "/tmp/codex-browser-use-1001");
+    assert.equal(
+      await resolve({ XDG_RUNTIME_DIR: `/run/user/1000/${"x".repeat(200)}` }),
+      expectedDefault,
+    );
+    assert.equal(await resolve({}), expectedDefault);
 
     const secondPatch = spawnSync(process.execPath, [patcher, clientPath, "--socket-dir-only"], {
       encoding: "utf8",
@@ -49,6 +55,8 @@ test("Linux socket discovery uses the override, runtime directory, then UID fall
     assert.equal(secondPatch.status, 0, secondPatch.stderr);
     assert.equal(fs.readFileSync(clientPath, "utf8"), patched);
   } finally {
+    delete globalThis.nodeRepl;
+    delete globalThis.result;
     fs.rmSync(workspace, { recursive: true, force: true });
   }
 });

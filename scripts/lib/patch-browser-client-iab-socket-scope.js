@@ -21,16 +21,16 @@ if (!source.includes(socketDirMarker)) {
   const socketDirectoryMatches = [...source.matchAll(socketDirectoryPattern)];
   if (socketDirectoryMatches.length === 1) {
     const [target, resolver, platform, windowsSocket] = socketDirectoryMatches[0];
+    const userInfoImport =
+      'import{userInfo as codexLinuxBrowserUseUserInfo}from"node:os";';
     const helper =
-      `function codexLinuxBrowserUseSocketDir(){let e=process.env.CODEX_BROWSER_USE_SOCKET_DIR;` +
-      `if(typeof e==="string"&&e.length>0)return e;let r=process.env.XDG_RUNTIME_DIR;` +
-      `if(typeof r==="string"&&r.length>0)return r.replace(/\\\/+$/,"")+"/codex-browser-use";` +
-      `let t=typeof process.getuid==="function"?process.getuid():null;` +
+      `function codexLinuxBrowserUseSocketDir(){let e=globalThis.nodeRepl?.env?.CODEX_BROWSER_USE_SOCKET_DIR;` +
+      `if(typeof e==="string"&&e.length>0)return e;let t=codexLinuxBrowserUseUserInfo().uid;` +
       `if(Number.isInteger(t)&&t>=0)return \`/tmp/codex-browser-use-\${t}\`;` +
       `throw Error("Browser Use cannot resolve a per-user Linux socket directory")}${socketDirMarker}`;
     const replacement =
       `${resolver}=${platform}=>${platform}==="win32"?${windowsSocket}:codexLinuxBrowserUseSocketDir()`;
-    source = helper + source.replace(target, replacement);
+    source = userInfoImport + helper + source.replace(target, replacement);
   } else if (source.includes("/tmp/codex-browser-use")) {
     process.stderr.write(
       `WARN: Expected one Browser Use socket-directory resolver, found ${socketDirectoryMatches.length}; leaving its path unchanged\n`,
