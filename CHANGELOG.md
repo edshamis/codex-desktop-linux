@@ -35,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The opt-in `chatgpt-complete-history` feature now follows the current split
+  ChatGPT history chunks, restoring phone-created and scheduled-run chats in
+  both the full history feed and recent-chat surfaces.
 - Launcher startup no longer requires Python's pidfd wrappers for normal
   launcher lock acquire and release. Pidfd remains reserved for the
   identity-verified stale Electron termination path.

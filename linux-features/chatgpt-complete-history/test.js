@@ -15,6 +15,8 @@ const {
 const { patchAssetFiles } = require("../../scripts/patches/lib/assets.js");
 const {
   applyChatgptCompleteHistoryPatch,
+  applyChatgptHistoryFeedPatch,
+  applyChatgptHistoryPredicatePatch,
   descriptors,
   historyPatchMarker,
   historyWarning,
@@ -22,16 +24,22 @@ const {
   tppFeedPatchMarker,
 } = require("./patch.js");
 
-const sharedSource = [
-  "function Cve(r){return r.flatMap(r=>{if(r.kind!==`optimistic`&&r.conversation.conversation_origin===`tpp`)return[];return[r.conversation]})}",
-  "function keep(e){let{conversation_origin:t}=e;return t!==`tpp`}",
-  "function zi(e){return e}",
-  "function zxe(e){return e.items}",
-  "function Bxe(e){return e.is_starred!==!0}",
-  "function EH(e){let{flatConversationHistory:i,tppOnly:a}=e===void 0?{}:e,l=!0,x={data:{pages:[{items:e.generic}]},isError:!1,isLoading:!1},y={isError:!1,isLoading:!1},S=zi({enabled:l&&a,data:e.tpp,isError:!1,isLoading:!1}),O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[];return{items:O,isConversationError:l&&(a?S.isError:y.isError||x.isError),isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)}}",
-  "function recent(e){return e.filter(keep)}",
+const historyFeedSource = [
+  "function kc(r){return r.flatMap(r=>{if(r.kind!==`optimistic`&&r.conversation.conversation_origin===`tpp`)return[];return[r.conversation]})}",
+  "function Pe(e){return{data:e.queryFn(),isError:!1,isLoading:!1}}",
+  "function Dl(e){return e.items}",
+  "function Ol(e){return e.is_starred!==!0}",
+  "function ml(e){let{flatConversationHistory:n,tppOnly:r}=e===void 0?{}:e,i=n===void 0?!1:n,a=r===void 0?!1:r,u=!0,x={isError:!1,isLoading:!1},C={data:{pages:[{items:e.generic}]},isError:!1,isLoading:!1},w=Pe({enabled:u&&a,queryFn:()=>e.tpp}),j=u?a?(w.data??[]).filter(Ol):(C.data?.pages??[]).flatMap(Dl):[];return{items:j,isConversationError:u&&(a?w.isError:x.isError||C.isError),isConversationLoading:u&&(a?w.isLoading:x.isLoading||C.isLoading)}}",
   "const EQ=1;",
-  "globalThis.historyTargets=Cve;globalThis.recent=recent;globalThis.source=EH;",
+  "globalThis.historyTargets=kc;globalThis.source=ml;",
+  "export{EQ as $,};",
+].join("");
+
+const historyPredicateSource = [
+  "function Pz(e){let{conversation_origin:t}=e;return t!==`tpp`}",
+  "function recent(e){return e.filter(Pz)}",
+  "const EQ=1;",
+  "globalThis.recent=recent;",
   "export{EQ as $,};",
 ].join("");
 
@@ -107,23 +115,36 @@ test("feature is disabled until selected and exposes only history patching", () 
           descriptor.id.startsWith("feature:chatgpt-complete-history:"),
         )
         .map((descriptor) => descriptor.id),
-      ["feature:chatgpt-complete-history:complete-history"],
+      [
+        "feature:chatgpt-complete-history:history-feed",
+        "feature:chatgpt-complete-history:history-predicate",
+      ],
     );
   });
 });
 
 test("keeps phone and scheduled TPP conversations in recent history", () => {
-  const patched = applyPatchTwice(
-    applyChatgptCompleteHistoryPatch,
-    sharedSource,
+  const patchedFeed = applyPatchTwice(
+    applyChatgptHistoryFeedPatch,
+    historyFeedSource,
   );
-  assert.equal(patched.includes(historyPatchMarker), true);
-  assert.equal(patched.includes(tppFeedPatchMarker), true);
-  assertParses(patched, "shared-history");
+  const patchedPredicate = applyPatchTwice(
+    applyChatgptHistoryPredicatePatch,
+    historyPredicateSource,
+  );
+  assert.equal(patchedFeed.includes(historyPatchMarker), true);
+  assert.equal(patchedFeed.includes(tppFeedPatchMarker), true);
+  assert.equal(patchedPredicate.includes(historyPatchMarker), true);
+  assertParses(patchedFeed, "history-feed");
+  assertParses(patchedPredicate, "history-predicate");
 
-  const runnable = patched.replace(/export\{[^;]+;/u, "");
-  const context = {};
-  vm.runInNewContext(runnable, context);
+  const feedContext = {};
+  vm.runInNewContext(patchedFeed.replace(/export\{[^;]+;/u, ""), feedContext);
+  const predicateContext = {};
+  vm.runInNewContext(
+    patchedPredicate.replace(/export\{[^;]+;/u, ""),
+    predicateContext,
+  );
   const conversations = [
     { id: "desktop", conversation_origin: null },
     { id: "phone", conversation_origin: "tpp" },
@@ -135,7 +156,7 @@ test("keeps phone and scheduled TPP conversations in recent history", () => {
   ];
   assert.deepEqual(
     Array.from(
-      context.historyTargets(
+      feedContext.historyTargets(
         conversations.map((conversation) => ({
           kind: "recent",
           conversation,
@@ -145,12 +166,12 @@ test("keeps phone and scheduled TPP conversations in recent history", () => {
     ["desktop", "phone", "scheduled"],
   );
   assert.deepEqual(
-    Array.from(context.recent(conversations)).map(({ id }) => id),
+    Array.from(predicateContext.recent(conversations)).map(({ id }) => id),
     ["desktop", "phone", "scheduled"],
   );
   assert.deepEqual(
     Array.from(
-      context.source({
+      feedContext.source({
         flatConversationHistory: true,
         generic: [conversations[0], conversations[1]],
         tpp: [conversations[1], conversations[2]],
@@ -171,15 +192,28 @@ test("conversation-list merging prefers the generic feed", () => {
 });
 
 test("drift leaves each asset byte-identical", () => {
-  const source = sharedSource.replace("return t!==`tpp`", "return t!=null");
-  const result = captureWarnings(() =>
-    applyChatgptCompleteHistoryPatch(source),
+  const feedSource = historyFeedSource.replace(
+    "w=Pe({enabled:u&&a,",
+    "w=Pe({enabled:u,",
   );
-  assert.equal(result.value, source);
-  assert.deepEqual(result.warnings, [historyWarning]);
+  const feedResult = captureWarnings(() =>
+    applyChatgptHistoryFeedPatch(feedSource),
+  );
+  assert.equal(feedResult.value, feedSource);
+  assert.deepEqual(feedResult.warnings, [historyWarning]);
+
+  const predicateSource = historyPredicateSource.replace(
+    "return t!==`tpp`",
+    "return t!=null",
+  );
+  const predicateResult = captureWarnings(() =>
+    applyChatgptHistoryPredicatePatch(predicateSource),
+  );
+  assert.equal(predicateResult.value, predicateSource);
+  assert.deepEqual(predicateResult.warnings, [historyWarning]);
 });
 
-test("descriptor targets only the shared history chunk", () => {
+test("descriptors target the current split history chunks", () => {
   const tempDir = fs.mkdtempSync(
     path.join(os.tmpdir(), "chatgpt-complete-history-assets-"),
   );
@@ -187,8 +221,15 @@ test("descriptor targets only the shared history chunk", () => {
     const assetsDir = path.join(tempDir, "webview", "assets");
     fs.mkdirSync(assetsDir, { recursive: true });
     fs.writeFileSync(
+      path.join(
+        assetsDir,
+        "app-initial~app-main~quick-chat-window-page-current.js",
+      ),
+      historyFeedSource,
+    );
+    fs.writeFileSync(
       path.join(assetsDir, "app-initial~app-main~page-current.js"),
-      sharedSource,
+      historyPredicateSource,
     );
 
     for (const descriptor of descriptors) {
@@ -205,4 +246,28 @@ test("descriptor targets only the shared history chunk", () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test("feed descriptor does not retain the superseded combined page target", () => {
+  assert.equal(
+    descriptors[0].pattern.test("app-initial~app-main~page-current.js"),
+    false,
+  );
+  assert.equal(
+    descriptors[1].pattern.test(
+      "app-initial~app-main~quick-chat-window-page-current.js",
+    ),
+    false,
+  );
+});
+
+test("combined helper dispatches each current split contract", () => {
+  assert.notEqual(
+    applyChatgptCompleteHistoryPatch(historyFeedSource),
+    historyFeedSource,
+  );
+  assert.notEqual(
+    applyChatgptCompleteHistoryPatch(historyPredicateSource),
+    historyPredicateSource,
+  );
 });

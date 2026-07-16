@@ -62,44 +62,69 @@ function literalEdits(source, contracts) {
 }
 
 function applyChatgptCompleteHistoryPatch(source) {
+  const hasFeedContract =
+    tppTargetFilterPattern.test(source) ||
+    patchedTppTargetFilterPattern.test(source) ||
+    source.includes("function ml(e){") ||
+    source.includes(tppFeedPatchMarker);
+  const hasPredicateContract =
+    tppPredicatePattern.test(source) || patchedTppPredicatePattern.test(source);
+
+  tppTargetFilterPattern.lastIndex = 0;
+  patchedTppTargetFilterPattern.lastIndex = 0;
+  tppPredicatePattern.lastIndex = 0;
+  patchedTppPredicatePattern.lastIndex = 0;
+
+  if (!hasFeedContract && !hasPredicateContract) {
+    console.warn(historyWarning);
+    return source;
+  }
+
+  let patched = source;
+  if (hasFeedContract) {
+    patched = applyChatgptHistoryFeedPatch(patched);
+  }
+  if (hasPredicateContract) {
+    patched = applyChatgptHistoryPredicatePatch(patched);
+  }
+  return patched;
+}
+
+function applyChatgptHistoryFeedPatch(source) {
   const targetFilters = matches(source, tppTargetFilterPattern);
   const patchedTargetFilters = matches(source, patchedTppTargetFilterPattern);
-  const predicates = matches(source, tppPredicatePattern);
-  const patchedPredicates = matches(source, patchedTppPredicatePattern);
   const hasFeedPatch = source.includes(tppFeedPatchMarker);
 
   if (
     targetFilters.length === 0 &&
     patchedTargetFilters.length === 1 &&
-    predicates.length === 0 &&
-    patchedPredicates.length === 1 &&
     hasFeedPatch
   ) {
     return source;
   }
 
-  const tppFeedEnable = "S=zi({enabled:l&&a,";
-  const patchedTppFeedEnable = `${tppFeedPatchMarker}S=zi({enabled:l&&(a||i),`;
+  const tppFeedEnable = "w=Pe({enabled:u&&a,";
+  const patchedTppFeedEnable = `${tppFeedPatchMarker}w=Pe({enabled:u&&(a||i),`;
   const flatHistoryConversations =
-    "O=l?a?(S.data??[]).filter(Bxe):(x.data?.pages??[]).flatMap(zxe):[]";
+    "j=u?a?(w.data??[]).filter(Ol):(C.data?.pages??[]).flatMap(Dl):[]";
   const mergeHelperSource = mergeConversationLists
     .toString()
     .replace(
       "function mergeConversationLists",
       "function codexLinuxMergeConversationLists",
     );
-  const historyHookAnchor = "function EH(e){";
+  const historyHookAnchor = "function ml(e){";
   const patchedHistoryHookAnchor = `${mergeHelperSource}${historyHookAnchor}`;
   const patchedFlatHistoryConversations =
-    "O=l?a?(S.data??[]).filter(Bxe):i?codexLinuxMergeConversationLists((x.data?.pages??[]).flatMap(zxe),(S.data??[]).filter(Bxe)):(x.data?.pages??[]).flatMap(zxe):[]";
+    "j=u?a?(w.data??[]).filter(Ol):i?codexLinuxMergeConversationLists((C.data?.pages??[]).flatMap(Dl),(w.data??[]).filter(Ol)):(C.data?.pages??[]).flatMap(Dl):[]";
   const conversationError =
-    "isConversationError:l&&(a?S.isError:y.isError||x.isError)";
+    "isConversationError:u&&(a?w.isError:x.isError||C.isError)";
   const patchedConversationError =
-    "isConversationError:l&&(a?S.isError:y.isError||x.isError||i&&S.isError)";
+    "isConversationError:u&&(a?w.isError:x.isError||C.isError||i&&w.isError)";
   const conversationLoading =
-    "isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading)";
+    "isConversationLoading:u&&(a?w.isLoading:x.isLoading||C.isLoading)";
   const patchedConversationLoading =
-    "isConversationLoading:l&&(a?S.isLoading:y.isLoading||x.isLoading||i&&S.isLoading)";
+    "isConversationLoading:u&&(a?w.isLoading:x.isLoading||C.isLoading||i&&w.isLoading)";
   const contracts = [
     [historyHookAnchor, patchedHistoryHookAnchor],
     [tppFeedEnable, patchedTppFeedEnable],
@@ -111,8 +136,6 @@ function applyChatgptCompleteHistoryPatch(source) {
   if (
     targetFilters.length !== 1 ||
     patchedTargetFilters.length !== 0 ||
-    predicates.length !== 1 ||
-    patchedPredicates.length !== 0 ||
     hasFeedPatch ||
     contracts.some(([contract]) => uniqueIndex(source, contract) < 0)
   ) {
@@ -120,38 +143,66 @@ function applyChatgptCompleteHistoryPatch(source) {
     return source;
   }
 
-  const predicate = predicates[0];
   const edits = [
     {
       start: targetFilters[0].index,
       end: targetFilters[0].index + targetFilters[0][0].length,
       replacement: `${historyPatchMarker}${targetFilters[0][0].replace("if(", "if(!1&&")}`,
     },
-    {
-      start: predicate.index,
-      end: predicate.index + predicate[0].length,
-      replacement: `${historyPatchMarker}function ${predicate[1]}(${predicate[2]}){let{conversation_origin:${predicate[3]}}=${predicate[2]};return!0}`,
-    },
     ...literalEdits(source, contracts),
   ];
   return applyEdits(source, edits);
 }
 
+function applyChatgptHistoryPredicatePatch(source) {
+  const predicates = matches(source, tppPredicatePattern);
+  const patchedPredicates = matches(source, patchedTppPredicatePattern);
+
+  if (predicates.length === 0 && patchedPredicates.length === 1) {
+    return source;
+  }
+  if (predicates.length !== 1 || patchedPredicates.length !== 0) {
+    console.warn(historyWarning);
+    return source;
+  }
+
+  const predicate = predicates[0];
+  return applyEdits(source, [
+    {
+      start: predicate.index,
+      end: predicate.index + predicate[0].length,
+      replacement: `${historyPatchMarker}function ${predicate[1]}(${predicate[2]}){let{conversation_origin:${predicate[3]}}=${predicate[2]};return!0}`,
+    },
+  ]);
+}
+
 const descriptors = [
   {
-    id: "complete-history",
+    id: "history-feed",
     phase: "webview-asset",
     order: 20_750,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~page-.*\.js$/,
-    missingDescription: "shared ChatGPT history bundle",
-    skipDescription: "complete ChatGPT history feature patch",
-    apply: applyChatgptCompleteHistoryPatch,
+    pattern: /^app-initial~app-main~quick-chat-window-page-[A-Za-z0-9_-]+\.js$/,
+    missingDescription: "ChatGPT history feed bundle",
+    skipDescription: "complete ChatGPT history feed patch",
+    apply: applyChatgptHistoryFeedPatch,
+  },
+  {
+    id: "history-predicate",
+    phase: "webview-asset",
+    order: 20_751,
+    ciPolicy: "optional",
+    pattern: /^app-initial~app-main~page-[A-Za-z0-9_-]+\.js$/,
+    missingDescription: "ChatGPT recent-history page bundle",
+    skipDescription: "complete ChatGPT history predicate patch",
+    apply: applyChatgptHistoryPredicatePatch,
   },
 ];
 
 module.exports = {
   applyChatgptCompleteHistoryPatch,
+  applyChatgptHistoryFeedPatch,
+  applyChatgptHistoryPredicatePatch,
   descriptors,
   historyPatchMarker,
   historyWarning,
