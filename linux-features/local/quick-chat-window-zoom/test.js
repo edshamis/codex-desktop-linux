@@ -12,6 +12,8 @@ const {
 } = require("../../../scripts/lib/linux-features.js");
 const {
   applyQuickChatWindowZoomPatch,
+  hasQuickChatWindowZoomPostconditions,
+  patchQuickChatWindowZoomAssets,
   quickChatWindowSpacerExtraHeight,
   quickChatWindowSpacerMaxHeight,
 } = require("./patch.js");
@@ -116,8 +118,105 @@ test("local feature stays disabled until explicitly enabled", () => {
       descriptors.map((descriptor) => descriptor.id),
       ["feature:quick-chat-window-zoom:quick-chat-window-zoom"],
     );
-    assert.match("app-initial~app-main~page-abc.js", descriptors[0].pattern);
-    assert.doesNotMatch("app-main-abc.js", descriptors[0].pattern);
+    assert.equal(descriptors[0].phase, "extracted-app:post-webview");
+    assert.equal(descriptors[0].pattern, undefined);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("discovers Quick Chat semantically after an arbitrary bundle rename", () => {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "quick-chat-window-assets-"),
+  );
+  try {
+    const assetsDir = path.join(tempDir, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const renamedBundle = path.join(assetsDir, "arbitrary-renamed-chunk.js");
+    const unrelatedBundle = path.join(
+      assetsDir,
+      "app-initial~app-main~page-decoy.js",
+    );
+    fs.writeFileSync(renamedBundle, quickChatComponent(), "utf8");
+    fs.writeFileSync(unrelatedBundle, "const zoomedViewport=true;", "utf8");
+
+    assert.deepEqual(patchQuickChatWindowZoomAssets(tempDir), {
+      matched: 1,
+      changed: true,
+      verified: true,
+      assetName: "arbitrary-renamed-chunk.js",
+    });
+    assert.equal(
+      hasQuickChatWindowZoomPostconditions(
+        fs.readFileSync(renamedBundle, "utf8"),
+      ),
+      true,
+    );
+    assert.equal(
+      fs.readFileSync(unrelatedBundle, "utf8"),
+      "const zoomedViewport=true;",
+    );
+    assert.deepEqual(patchQuickChatWindowZoomAssets(tempDir), {
+      matched: 1,
+      changed: false,
+      verified: true,
+      assetName: "arbitrary-renamed-chunk.js",
+    });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("rejects missing or ambiguous semantic Quick Chat bundles", () => {
+  const tempDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "quick-chat-window-assets-"),
+  );
+  try {
+    const assetsDir = path.join(tempDir, "webview", "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(assetsDir, "decoy.js"),
+      "const quickChat=true;",
+      "utf8",
+    );
+
+    let result;
+    assert.deepEqual(
+      captureWarnings(() => {
+        result = patchQuickChatWindowZoomAssets(tempDir);
+      }),
+      [
+        `WARN: Could not find the semantic Quick Chat window bundle in ${assetsDir} — skipping Quick Chat zoom patch`,
+      ],
+    );
+    assert.equal(result.matched, 0);
+    assert.equal(result.verified, false);
+
+    fs.writeFileSync(
+      path.join(assetsDir, "quick-a.js"),
+      quickChatComponent(),
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(assetsDir, "quick-b.js"),
+      quickChatComponent(),
+      "utf8",
+    );
+    assert.deepEqual(
+      captureWarnings(() => {
+        result = patchQuickChatWindowZoomAssets(tempDir);
+      }),
+      [
+        `WARN: Found 2 semantic Quick Chat window bundles in ${assetsDir}; expected exactly one — skipping Quick Chat zoom patch`,
+      ],
+    );
+    assert.equal(result.matched, 2);
+    assert.equal(result.changed, false);
+    assert.equal(result.verified, false);
+    assert.equal(
+      fs.readFileSync(path.join(assetsDir, "quick-a.js"), "utf8"),
+      quickChatComponent(),
+    );
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

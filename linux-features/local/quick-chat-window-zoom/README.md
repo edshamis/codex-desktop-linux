@@ -37,6 +37,9 @@ node --test scripts/patch-linux-window-ui.test.js
 
 The patch is idempotent and all-or-nothing across discovered Quick Chat roots,
 their zoom-aware scroll signals, and the detached-window thread-tail spacer. If
-an upstream bundle drifts or any contract cannot be verified, it warns and
-leaves the asset unchanged. Since enabled-feature drift rejects an updater
+an upstream bundle is renamed, the feature finds it from the complete semantic
+contract rather than the generated filename. Zero or multiple semantic matches
+fail closed, and `already-applied` is emitted only after all three output
+postconditions verify. If the contract itself drifts, the feature warns and
+leaves every asset unchanged. Since enabled-feature drift rejects an updater
 candidate, upstream app updates must pass CI before this feature is deployed.

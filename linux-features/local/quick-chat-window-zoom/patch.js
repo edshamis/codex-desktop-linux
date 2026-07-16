@@ -1,13 +1,40 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const {
   escapeRegExp,
   findMatchingBrace,
 } = require("../../../scripts/patches/lib/minified-js.js");
 
 const quickChatWindowSpacerExtraHeight = 48;
-const quickChatWindowSpacerMaxHeight =
-  `calc(var(--quick-chat-footer-height, 0px) + ${quickChatWindowSpacerExtraHeight}px)`;
+const quickChatWindowSpacerMaxHeight = `calc(var(--quick-chat-footer-height, 0px) + ${quickChatWindowSpacerExtraHeight}px)`;
+const quickChatWindowTargetMarkers = [
+  "data-quick-chat-thread-scroll-spacer",
+  "initialScrollMode:",
+  "isWindowZoomApplied:",
+  "scrollOrigin:",
+  ".floatingSurface",
+  "bg-token-editor-background/55",
+];
+const quickChatWindowRootPrefixPattern =
+  /([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),\1===`window`&&/gu;
+const patchedQuickChatWindowPattern =
+  /([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),\1===`window`&&\2\(\3\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/gu;
+const patchedQuickChatWindowScrollPattern =
+  /[A-Za-z_$][\w$]*=([A-Za-z_$][\w$]*)===`floating`\|\|\1===`window`,[A-Za-z_$][\w$]*=/gu;
+
+function regexpMatches(source, pattern) {
+  pattern.lastIndex = 0;
+  return [...source.matchAll(pattern)];
+}
+
+function isQuickChatWindowZoomTarget(source) {
+  return quickChatWindowTargetMarkers.every((marker) =>
+    source.includes(marker),
+  );
+}
 
 function findQuickChatWindowSpacerContract(currentSource) {
   const identifier = "[A-Za-z_$][\\w$]*";
@@ -77,9 +104,7 @@ function findQuickChatWindowSpacerContract(currentSource) {
       ),
       fixedSpacerPattern.flags,
     );
-    const legacyCapMatches = [
-      ...functionSource.matchAll(legacyCapPattern),
-    ];
+    const legacyCapMatches = [...functionSource.matchAll(legacyCapPattern)];
     const responsiveCapPattern = new RegExp(
       fixedSpacerPattern.source.replace(
         "maxHeight:0",
@@ -123,13 +148,9 @@ function findQuickChatWindowSpacerContract(currentSource) {
 
 function applyQuickChatWindowZoomPatch(currentSource) {
   const zoomContractLookbehind = 12_000;
-  const quickChatWindowRootPrefixPattern =
-    /([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),\1===`window`&&/gu;
   const quickChatWindowRootPattern =
     /(([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),)\2===`window`&&`relative h-dvh w-full overflow-hidden bg-token-editor-background\/55`/gu;
-  const patchedQuickChatWindowPattern =
-    /([A-Za-z_$][\w$]*)===`floating`&&([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\.floatingSurface,`[^`]*`\),\1===`window`&&\2\(\3\.zoomedViewport,`relative overflow-hidden bg-token-editor-background\/55`\)/gu;
-  const roots = [...currentSource.matchAll(quickChatWindowRootPrefixPattern)];
+  const roots = regexpMatches(currentSource, quickChatWindowRootPrefixPattern);
 
   if (roots.length > 0) {
     const patchableRoots = new Map(
@@ -314,20 +335,99 @@ function applyQuickChatWindowZoomPatch(currentSource) {
   return currentSource;
 }
 
+function hasQuickChatWindowZoomPostconditions(source) {
+  if (!isQuickChatWindowZoomTarget(source)) {
+    return false;
+  }
+
+  const roots = regexpMatches(source, quickChatWindowRootPrefixPattern);
+  const patchedRoots = regexpMatches(source, patchedQuickChatWindowPattern);
+  const patchedScrollContracts = regexpMatches(
+    source,
+    patchedQuickChatWindowScrollPattern,
+  );
+  const spacerContract = findQuickChatWindowSpacerContract(source);
+
+  return (
+    roots.length > 0 &&
+    patchedRoots.length === roots.length &&
+    patchedScrollContracts.length > 0 &&
+    spacerContract != null &&
+    spacerContract.edit == null
+  );
+}
+
+function quickChatWindowZoomAssetCandidates(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(assetsDir)) {
+    return { assetsDir, matches: [] };
+  }
+
+  const matches = fs
+    .readdirSync(assetsDir)
+    .filter((name) => name.endsWith(".js"))
+    .sort()
+    .map((name) => {
+      const filePath = path.join(assetsDir, name);
+      return { filePath, name, source: fs.readFileSync(filePath, "utf8") };
+    })
+    .filter(({ source }) => isQuickChatWindowZoomTarget(source));
+  return { assetsDir, matches };
+}
+
+function patchQuickChatWindowZoomAssets(extractedDir) {
+  const { assetsDir, matches } =
+    quickChatWindowZoomAssetCandidates(extractedDir);
+  if (matches.length !== 1) {
+    const reason =
+      matches.length === 0
+        ? `Could not find the semantic Quick Chat window bundle in ${assetsDir}`
+        : `Found ${matches.length} semantic Quick Chat window bundles in ${assetsDir}; expected exactly one`;
+    console.warn(`WARN: ${reason} — skipping Quick Chat zoom patch`);
+    return { matched: matches.length, changed: false, verified: false, reason };
+  }
+
+  const [{ filePath, name, source }] = matches;
+  if (hasQuickChatWindowZoomPostconditions(source)) {
+    return { matched: 1, changed: false, verified: true, assetName: name };
+  }
+
+  const patchedSource = applyQuickChatWindowZoomPatch(source);
+  if (
+    patchedSource === source ||
+    !hasQuickChatWindowZoomPostconditions(patchedSource)
+  ) {
+    const reason = `Quick Chat zoom postconditions failed for ${name}`;
+    console.warn(`WARN: ${reason} — leaving the asset unchanged`);
+    return { matched: 1, changed: false, verified: false, reason };
+  }
+
+  fs.writeFileSync(filePath, patchedSource, "utf8");
+  return { matched: 1, changed: true, verified: true, assetName: name };
+}
+
 module.exports = {
   descriptors: [
     {
       id: "quick-chat-window-zoom",
-      phase: "webview-asset",
+      phase: "extracted-app:post-webview",
       order: 20_740,
       ciPolicy: "optional",
-      pattern: /^app-initial~app-main~page-.*\.js$/,
-      missingDescription: "shared Quick Chat component bundle",
-      skipDescription: "popped-out Quick Chat zoom root patch",
-      apply: applyQuickChatWindowZoomPatch,
+      apply: patchQuickChatWindowZoomAssets,
+      status: (result, warnings) => ({
+        status: result?.changed
+          ? "applied"
+          : result?.verified && result?.matched === 1 && warnings.length === 0
+            ? "already-applied"
+            : "skipped-optional",
+        reason: result?.reason ?? warnings[0] ?? null,
+      }),
     },
   ],
   applyQuickChatWindowZoomPatch,
+  hasQuickChatWindowZoomPostconditions,
+  isQuickChatWindowZoomTarget,
+  patchQuickChatWindowZoomAssets,
   quickChatWindowSpacerExtraHeight,
   quickChatWindowSpacerMaxHeight,
 };
