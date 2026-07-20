@@ -2804,12 +2804,17 @@ test("updates every Linux zoom titlebar overlay refresh call site", () => {
   );
 });
 
-test("adds a right-side safe area for Linux window controls in application menu chrome", () => {
-  const source = [
-    "var l=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+c,right:0}),modern:Object.freeze({left:76+c,right:0})}),applicationMenu:Object.freeze({left:0,right:0})});",
-    "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+function windowControlsSafeAreaFixture(firstInset = 0, secondInset = 0) {
+  return [
+    `var l=Object.freeze({default:Object.freeze({left:0,right:0}),mac:Object.freeze({legacy:Object.freeze({left:66+c,right:0}),modern:Object.freeze({left:76+c,right:0})}),applicationMenu:Object.freeze({left:0,right:${firstInset}})});`,
+    `var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:${secondInset}})});`,
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return (0,gl.jsxs)(ue.header,{className:a(`app-header`,t?`top-toolbar-sm`:`top-0`),children:[(0,gl.jsx)(sl,{entries:m,fitWidth:n,slotWidth:t?c:o,side:`start`}),(0,gl.jsx)(sl,{entries:h,fitWidth:r,slotWidth:u,side:`end`})]})}",
     "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}",
   ].join("");
+}
+
+test("uses the Linux window-controls safe area only when the app header shares the titlebar", () => {
+  const source = windowControlsSafeAreaFixture();
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
 
@@ -2823,17 +2828,38 @@ test("adds a right-side safe area for Linux window controls in application menu 
   );
   assert.match(
     patched,
-    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+    /codexLinuxUseWindowControlsSafeArea:!t,side:`end`/,
   );
-  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`/);
+  assert.match(
+    patched,
+    /function sl\(\{entries:e,fitWidth:t,side:n,slotWidth:r,codexLinuxUseWindowControlsSafeArea\}\)/,
+  );
+  assert.match(
+    patched,
+    /"pe-2":n===`start`&&i\|\|n===`end`&&!codexLinuxUseWindowControlsSafeArea,"pe-\(--spacing-token-safe-header-right\)":n===`end`&&codexLinuxUseWindowControlsSafeArea/,
+  );
+  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`(?=[,}])/);
+
+  const classRulesSource = patched.match(
+    /o=a\((\{[^{}]*codexLinuxUseWindowControlsSafeArea[^{}]*\})\),s=vr/,
+  )?.[1];
+  assert.ok(classRulesSource);
+  const resolveClassRules = (side, hasEndEntries, useWindowControlsSafeArea) =>
+    vm.runInNewContext(`(${classRulesSource})`, {
+      n: side,
+      i: hasEndEntries,
+      codexLinuxUseWindowControlsSafeArea: useWindowControlsSafeArea,
+    });
+  const separateRowClasses = resolveClassRules("end", true, false);
+  assert.equal(separateRowClasses["pe-2"], true);
+  assert.equal(separateRowClasses["pe-(--spacing-token-safe-header-right)"], false);
+  const overlaidTitlebarClasses = resolveClassRules("end", true, true);
+  assert.equal(overlaidTitlebarClasses["pe-2"], false);
+  assert.equal(overlaidTitlebarClasses["pe-(--spacing-token-safe-header-right)"], true);
 });
 
 test("patches remaining Linux window controls safe areas when another copy is already patched", () => {
-  const source = [
-    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});",
-    "var m=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
-    "function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}",
-  ].join("");
+  const source = windowControlsSafeAreaFixture(138, 0);
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
 
@@ -2847,21 +2873,36 @@ test("patches remaining Linux window controls safe areas when another copy is al
   );
   assert.match(
     patched,
-    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+    /codexLinuxUseWindowControlsSafeArea:!t,side:`end`/,
   );
 });
 
 test("patches remaining Linux header safe-area padding when the menu inset is already patched", () => {
-  const source =
-    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:138})});function sl({entries:e,fitWidth:t,side:n,slotWidth:r}){let i=e.some(({align:e})=>e===`end`),o=a({\"ps-[max(var(--spacing-token-safe-header-left),0.5rem)]\":n===`start`,\"pe-2\":n===`start`&&i||n===`end`}),s=vr(e=>{let{width:n}=sr(e);t.set(n)});return jsx(o)}";
+  const source = windowControlsSafeAreaFixture(138, 138);
 
   const patched = applyPatchTwice(applyLinuxWindowControlsSafeAreaPatch, source);
 
   assert.match(
     patched,
-    /"pe-2":n===`start`&&i,"pe-\(--spacing-token-safe-header-right\)":n===`end`/,
+    /"pe-2":n===`start`&&i\|\|n===`end`&&!codexLinuxUseWindowControlsSafeArea,"pe-\(--spacing-token-safe-header-right\)":n===`end`&&codexLinuxUseWindowControlsSafeArea/,
   );
-  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`/);
+  assert.doesNotMatch(patched, /"pe-2":n===`start`&&i\|\|n===`end`(?=[,}])/);
+});
+
+test("warns when the Linux window-controls safe area cannot follow the current header layout", () => {
+  const source = [
+    "var l=Object.freeze({applicationMenu:Object.freeze({left:0,right:0})});",
+    "function ol({isHeaderEdgeScroll:e,isApplicationMenuBarEnabled:t}){return jsx(`drifted-header`)}",
+  ].join("");
+
+  const { value, warnings } = captureWarns(() =>
+    applyLinuxWindowControlsSafeAreaPatch(source),
+  );
+
+  assert.match(value, /applicationMenu:Object\.freeze\(\{left:0,right:138\}\)/);
+  assert.deepEqual(warnings, [
+    "WARN: Could not connect the Linux window controls safe area to the current app header layout",
+  ]);
 });
 
 test("keeps tooltips out of the Linux window controls titlebar area", () => {

@@ -16,6 +16,7 @@ const LINUX_SAFE_MONOSPACE_FONT_STACK =
   "\"Noto Sans Mono\", \"DejaVu Sans Mono\", \"Liberation Mono\", \"Ubuntu Mono\", ui-monospace, \"SFMono-Regular\", \"SF Mono\", Menlo, Consolas, monospace";
 const LINUX_TOOLTIP_COLLISION_PADDING_TOP = 44;
 const LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT = 138;
+const LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP = "codexLinuxUseWindowControlsSafeArea";
 
 function applyLinuxSafeMonospaceFontStackPatch(currentSource) {
   const safeLinuxMonoFontPattern =
@@ -141,35 +142,118 @@ function applyLinuxOpaqueWindowsDefaultPatch(currentSource) {
   return currentSource;
 }
 
+function applyLinuxHeaderSlotSafeAreaPatch(currentSource) {
+  const prop = LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP;
+  const alreadyPatched =
+    currentSource.includes(`${prop}:!`) &&
+    currentSource.includes(`,${prop}}){`) &&
+    currentSource.includes(`&&!${prop},"pe-(--spacing-token-safe-header-right)":`) &&
+    currentSource.includes(`&&${prop}`);
+  if (alreadyPatched) {
+    return currentSource;
+  }
+  if (currentSource.includes(prop)) {
+    return null;
+  }
+
+  const headerMatch = currentSource.match(
+    /function [A-Za-z_$][\w$]*\(\{isHeaderEdgeScroll:[A-Za-z_$][\w$]*,isApplicationMenuBarEnabled:([A-Za-z_$][\w$]*)\}\)\{/u,
+  );
+  if (headerMatch == null) {
+    return null;
+  }
+  const headerOpenBrace = headerMatch.index + headerMatch[0].length - 1;
+  const headerCloseBrace = findMatchingBrace(currentSource, headerOpenBrace);
+  if (headerCloseBrace === -1) {
+    return null;
+  }
+  const headerSource = currentSource.slice(headerMatch.index, headerCloseBrace + 1);
+  const endSlotPattern = /(slotWidth:[A-Za-z_$][\w$]*),side:`end`/gu;
+  const endSlotMatches = [...headerSource.matchAll(endSlotPattern)];
+  if (endSlotMatches.length !== 1) {
+    return null;
+  }
+
+  const slotMatches = [...currentSource.matchAll(
+    /function [A-Za-z_$][\w$]*\(\{entries:[A-Za-z_$][\w$]*,fitWidth:[A-Za-z_$][\w$]*,side:([A-Za-z_$][\w$]*),slotWidth:[A-Za-z_$][\w$]*\}\)\{/gu,
+  )];
+  if (slotMatches.length !== 1) {
+    return null;
+  }
+  const slotMatch = slotMatches[0];
+  const slotOpenBrace = slotMatch.index + slotMatch[0].length - 1;
+  const slotCloseBrace = findMatchingBrace(currentSource, slotOpenBrace);
+  if (slotCloseBrace === -1) {
+    return null;
+  }
+  const slotSource = currentSource.slice(slotMatch.index, slotCloseBrace + 1);
+  const sideAlias = slotMatch[1];
+  const paddingPattern = new RegExp(
+    `"pe-2":${escapeRegExp(sideAlias)}===\`start\`&&([A-Za-z_$][\\w$]*)\\|\\|${escapeRegExp(sideAlias)}===\`end\``,
+    "u",
+  );
+  const paddingMatch = slotSource.match(paddingPattern);
+  if (paddingMatch == null) {
+    return null;
+  }
+
+  const menuEnabledAlias = headerMatch[1];
+  const hasEndEntriesAlias = paddingMatch[1];
+  const patchedHeaderSource = headerSource.replace(
+    endSlotPattern,
+    `$1,${prop}:!${menuEnabledAlias},side:\`end\``,
+  );
+  const patchedSlotSource = slotSource
+    .replace(
+      slotMatch[0],
+      slotMatch[0].replace("}){", `,${prop}}){`),
+    )
+    .replace(
+      paddingPattern,
+      `"pe-2":${sideAlias}===\`start\`&&${hasEndEntriesAlias}||${sideAlias}===\`end\`&&!${prop},"pe-(--spacing-token-safe-header-right)":${sideAlias}===\`end\`&&${prop}`,
+    );
+
+  return currentSource
+    .replace(headerSource, patchedHeaderSource)
+    .replace(slotSource, patchedSlotSource);
+}
+
 function applyLinuxWindowControlsSafeAreaPatch(currentSource) {
   const currentInset = `applicationMenu:Object.freeze({left:0,right:${LINUX_WINDOW_CONTROLS_SAFE_AREA_RIGHT}})`;
   const defaultInset = "applicationMenu:Object.freeze({left:0,right:0})";
-  const currentHeaderSlotPadding =
-    '"pe-2":n===`start`&&i,"pe-(--spacing-token-safe-header-right)":n===`end`';
-  const defaultHeaderSlotPadding = '"pe-2":n===`start`&&i||n===`end`';
 
   let patchedSource = currentSource;
   if (patchedSource.includes(defaultInset)) {
     patchedSource = patchedSource.split(defaultInset).join(currentInset);
   }
 
-  if (patchedSource.includes(defaultHeaderSlotPadding)) {
-    patchedSource = patchedSource.split(defaultHeaderSlotPadding).join(currentHeaderSlotPadding);
+  let warnedHeaderSlotDrift = false;
+  const headerSlotSource = applyLinuxHeaderSlotSafeAreaPatch(patchedSource);
+  if (headerSlotSource != null) {
+    patchedSource = headerSlotSource;
+  } else if (currentSource.includes("isApplicationMenuBarEnabled")) {
+    console.warn(
+      "WARN: Could not connect the Linux window controls safe area to the current app header layout",
+    );
+    warnedHeaderSlotDrift = true;
   }
 
   if (
     patchedSource !== currentSource ||
     (
       patchedSource.includes(currentInset) &&
-      patchedSource.includes(currentHeaderSlotPadding)
+      patchedSource.includes(LINUX_WINDOW_CONTROLS_SAFE_AREA_PROP)
     )
   ) {
     return patchedSource;
   }
 
   if (
-    currentSource.includes("applicationMenu:Object.freeze({left:0,right:") ||
-    currentSource.includes("spacing-token-safe-header-right")
+    !warnedHeaderSlotDrift &&
+    (
+      currentSource.includes("applicationMenu:Object.freeze({left:0,right:") ||
+      currentSource.includes("spacing-token-safe-header-right")
+    )
   ) {
     console.warn(
       "WARN: Could not find Linux window controls safe-area insertion point — skipping safe-area patch",
