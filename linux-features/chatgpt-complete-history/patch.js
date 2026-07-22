@@ -1,10 +1,12 @@
 "use strict";
 
+const fs = require("node:fs");
+const path = require("node:path");
+
 const identifier = "[A-Za-z_$][\\w$]*";
 const historyPatchMarker = "/*codex-linux-chatgpt-complete-history*/";
-const tppFeedPatchMarker = "/*codex-linux-chatgpt-tpp-history-feed*/";
 const historyWarning =
-  "WARN: Could not find current ChatGPT history contracts - skipping complete history feature patch";
+  "WARN: Could not verify current ChatGPT complete-history contracts - skipping complete history feature patch";
 
 const tppTargetFilterPattern = new RegExp(
   `if\\((${identifier})\\.kind!==\`optimistic\`&&\\1\\.conversation\\.conversation_origin===\`tpp\`\\)return\\[\\];`,
@@ -14,198 +16,175 @@ const patchedTppTargetFilterPattern = new RegExp(
   `${escapeRegExp(historyPatchMarker)}if\\(!1&&(${identifier})\\.kind!==\`optimistic\`&&\\1\\.conversation\\.conversation_origin===\`tpp\`\\)return\\[\\];`,
   "gu",
 );
-const tppPredicatePattern = new RegExp(
-  `function (${identifier})\\((${identifier})\\)\\{let\\{conversation_origin:(${identifier})\\}=\\2;return \\3!==\`tpp\`\\}`,
-  "gu",
+const nativeHistoryMergePattern = new RegExp(
+  `\\.\\.\\.\\(${identifier}\\.data\\?\\.pages\\?\\?\\[\\]\\)\\.flatMap\\(${identifier}\\),` +
+    `\\.\\.\\.\\(${identifier}\\.data\\?\\.pages\\?\\?\\[\\]\\)\\.flatMap\\(${identifier}\\)`,
+  "u",
 );
-const patchedTppPredicatePattern = new RegExp(
-  `${escapeRegExp(historyPatchMarker)}function (${identifier})\\((${identifier})\\)\\{let\\{conversation_origin:(${identifier})\\}=\\2;return!0\\}`,
-  "gu",
-);
-function mergeConversationLists(primary, secondary) {
-  const ids = new Set(primary.map((conversation) => conversation.id));
-  return [
-    ...primary,
-    ...secondary.filter((conversation) => !ids.has(conversation.id)),
-  ];
-}
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function matches(source, pattern) {
+  pattern.lastIndex = 0;
   return [...source.matchAll(pattern)];
 }
 
-function uniqueIndex(source, value) {
-  const index = source.indexOf(value);
-  return index >= 0 && source.indexOf(value, index + value.length) === -1
-    ? index
-    : -1;
+function hasNativeCompleteHistoryFeed(source) {
+  return (
+    source.includes("flatConversationHistory") &&
+    source.includes("excludeConversationOrigin:`tpp`") &&
+    source.includes("conversationOrigin:`tpp`") &&
+    source.includes("isConversationError:") &&
+    source.includes("isConversationLoading:") &&
+    nativeHistoryMergePattern.test(source)
+  );
 }
 
-function applyEdits(source, edits) {
-  let patched = source;
-  for (const edit of edits.sort((left, right) => right.start - left.start)) {
-    patched =
-      patched.slice(0, edit.start) + edit.replacement + patched.slice(edit.end);
+function patchQuickChatHistorySource(source) {
+  const raw = matches(source, tppTargetFilterPattern);
+  const patched = matches(source, patchedTppTargetFilterPattern);
+  if (raw.length === 0 && patched.length === 1) {
+    return { source, matched: 1, changed: 0, reason: null };
   }
-  return patched;
+  if (raw.length !== 1 || patched.length !== 0) {
+    return {
+      source,
+      matched: 0,
+      changed: 0,
+      reason: `Found ${raw.length} unpatched and ${patched.length} patched Quick Chat TPP filters`,
+    };
+  }
+
+  const match = raw[0];
+  return {
+    source:
+      source.slice(0, match.index) +
+      historyPatchMarker +
+      match[0].replace("if(", "if(!1&&") +
+      source.slice(match.index + match[0].length),
+    matched: 1,
+    changed: 1,
+    reason: null,
+  };
 }
 
-function literalEdits(source, contracts) {
-  return contracts.map(([contract, replacement]) => {
-    const start = uniqueIndex(source, contract);
-    return { start, end: start + contract.length, replacement };
-  });
+function webviewJavaScriptAssetNames(extractedDir) {
+  const assetsDir = path.join(extractedDir, "webview", "assets");
+  if (!fs.existsSync(assetsDir)) {
+    return { assetsDir, names: [] };
+  }
+  return {
+    assetsDir,
+    names: fs
+      .readdirSync(assetsDir)
+      .filter((name) => name.endsWith(".js"))
+      .sort(),
+  };
 }
 
-function applyChatgptCompleteHistoryPatch(source) {
-  const hasFeedContract =
-    tppTargetFilterPattern.test(source) ||
-    patchedTppTargetFilterPattern.test(source) ||
-    source.includes("function ml(e){") ||
-    source.includes(tppFeedPatchMarker);
-  const hasPredicateContract =
-    tppPredicatePattern.test(source) || patchedTppPredicatePattern.test(source);
-
-  tppTargetFilterPattern.lastIndex = 0;
-  patchedTppTargetFilterPattern.lastIndex = 0;
-  tppPredicatePattern.lastIndex = 0;
-  patchedTppPredicatePattern.lastIndex = 0;
-
-  if (!hasFeedContract && !hasPredicateContract) {
-    console.warn(historyWarning);
-    return source;
+function discoverCompleteHistoryContracts(extractedDir) {
+  const { assetsDir, names } = webviewJavaScriptAssetNames(extractedDir);
+  if (names.length === 0) {
+    return {
+      verified: false,
+      reason: `No JavaScript webview assets found in ${assetsDir}`,
+    };
   }
 
-  let patched = source;
-  if (hasFeedContract) {
-    patched = applyChatgptHistoryFeedPatch(patched);
+  const quickChatCandidates = [];
+  const nativeHistoryCandidates = [];
+  for (const name of names) {
+    const source = fs.readFileSync(path.join(assetsDir, name), "utf8");
+    const result = patchQuickChatHistorySource(source);
+    if (result.matched === 1) {
+      quickChatCandidates.push({ name, source, result });
+    }
+    if (hasNativeCompleteHistoryFeed(source)) {
+      nativeHistoryCandidates.push({ name });
+    }
   }
-  if (hasPredicateContract) {
-    patched = applyChatgptHistoryPredicatePatch(patched);
+
+  if (quickChatCandidates.length !== 1) {
+    return {
+      verified: false,
+      reason: `Found ${quickChatCandidates.length} Quick Chat TPP filter contracts`,
+    };
   }
-  return patched;
+  if (nativeHistoryCandidates.length !== 1) {
+    return {
+      verified: false,
+      reason: `Found ${nativeHistoryCandidates.length} native complete-history feed contracts`,
+    };
+  }
+
+  return {
+    verified: true,
+    reason: null,
+    assetsDir,
+    quickChat: quickChatCandidates[0],
+    nativeHistory: nativeHistoryCandidates[0],
+  };
 }
 
-function applyChatgptHistoryFeedPatch(source) {
-  const targetFilters = matches(source, tppTargetFilterPattern);
-  const patchedTargetFilters = matches(source, patchedTppTargetFilterPattern);
-  const hasFeedPatch = source.includes(tppFeedPatchMarker);
-
-  if (
-    targetFilters.length === 0 &&
-    patchedTargetFilters.length === 1 &&
-    hasFeedPatch
-  ) {
-    return source;
+function patchCompleteHistory(extractedDir) {
+  const discovery = discoverCompleteHistoryContracts(extractedDir);
+  if (!discovery.verified) {
+    console.warn(`${historyWarning}: ${discovery.reason}`);
+    return {
+      matched: 0,
+      changed: 0,
+      verified: false,
+      reason: discovery.reason,
+    };
   }
 
-  const tppFeedEnable = "w=Pe({enabled:u&&a,";
-  const patchedTppFeedEnable = `${tppFeedPatchMarker}w=Pe({enabled:u&&(a||i),`;
-  const flatHistoryConversations =
-    "j=u?a?(w.data??[]).filter(Ol):(C.data?.pages??[]).flatMap(Dl):[]";
-  const mergeHelperSource = mergeConversationLists
-    .toString()
-    .replace(
-      "function mergeConversationLists",
-      "function codexLinuxMergeConversationLists",
+  const { quickChat, nativeHistory, assetsDir } = discovery;
+  if (quickChat.result.changed === 1) {
+    fs.writeFileSync(
+      path.join(assetsDir, quickChat.name),
+      quickChat.result.source,
+      "utf8",
     );
-  const historyHookAnchor = "function ml(e){";
-  const patchedHistoryHookAnchor = `${mergeHelperSource}${historyHookAnchor}`;
-  const patchedFlatHistoryConversations =
-    "j=u?a?(w.data??[]).filter(Ol):i?codexLinuxMergeConversationLists((C.data?.pages??[]).flatMap(Dl),(w.data??[]).filter(Ol)):(C.data?.pages??[]).flatMap(Dl):[]";
-  const conversationError =
-    "isConversationError:u&&(a?w.isError:x.isError||C.isError)";
-  const patchedConversationError =
-    "isConversationError:u&&(a?w.isError:x.isError||C.isError||i&&w.isError)";
-  const conversationLoading =
-    "isConversationLoading:u&&(a?w.isLoading:x.isLoading||C.isLoading)";
-  const patchedConversationLoading =
-    "isConversationLoading:u&&(a?w.isLoading:x.isLoading||C.isLoading||i&&w.isLoading)";
-  const contracts = [
-    [historyHookAnchor, patchedHistoryHookAnchor],
-    [tppFeedEnable, patchedTppFeedEnable],
-    [flatHistoryConversations, patchedFlatHistoryConversations],
-    [conversationError, patchedConversationError],
-    [conversationLoading, patchedConversationLoading],
-  ];
-
-  if (
-    targetFilters.length !== 1 ||
-    patchedTargetFilters.length !== 0 ||
-    hasFeedPatch ||
-    contracts.some(([contract]) => uniqueIndex(source, contract) < 0)
-  ) {
-    console.warn(historyWarning);
-    return source;
   }
-
-  const edits = [
-    {
-      start: targetFilters[0].index,
-      end: targetFilters[0].index + targetFilters[0][0].length,
-      replacement: `${historyPatchMarker}${targetFilters[0][0].replace("if(", "if(!1&&")}`,
+  return {
+    matched: 2,
+    changed: quickChat.result.changed,
+    verified: true,
+    reason: null,
+    targets: {
+      quickChat: quickChat.name,
+      nativeHistory: nativeHistory.name,
     },
-    ...literalEdits(source, contracts),
-  ];
-  return applyEdits(source, edits);
-}
-
-function applyChatgptHistoryPredicatePatch(source) {
-  const predicates = matches(source, tppPredicatePattern);
-  const patchedPredicates = matches(source, patchedTppPredicatePattern);
-
-  if (predicates.length === 0 && patchedPredicates.length === 1) {
-    return source;
-  }
-  if (predicates.length !== 1 || patchedPredicates.length !== 0) {
-    console.warn(historyWarning);
-    return source;
-  }
-
-  const predicate = predicates[0];
-  return applyEdits(source, [
-    {
-      start: predicate.index,
-      end: predicate.index + predicate[0].length,
-      replacement: `${historyPatchMarker}function ${predicate[1]}(${predicate[2]}){let{conversation_origin:${predicate[3]}}=${predicate[2]};return!0}`,
-    },
-  ]);
+  };
 }
 
 const descriptors = [
   {
-    id: "history-feed",
-    phase: "webview-asset",
+    id: "complete-history",
+    phase: "extracted-app:post-webview",
     order: 20_750,
     ciPolicy: "optional",
-    pattern: /^app-initial~app-main~quick-chat-window-page-[A-Za-z0-9_-]+\.js$/,
-    missingDescription: "ChatGPT history feed bundle",
-    skipDescription: "complete ChatGPT history feed patch",
-    apply: applyChatgptHistoryFeedPatch,
-  },
-  {
-    id: "history-predicate",
-    phase: "webview-asset",
-    order: 20_751,
-    ciPolicy: "optional",
-    pattern: /^app-initial~app-main~page-[A-Za-z0-9_-]+\.js$/,
-    missingDescription: "ChatGPT recent-history page bundle",
-    skipDescription: "complete ChatGPT history predicate patch",
-    apply: applyChatgptHistoryPredicatePatch,
+    apply: patchCompleteHistory,
+    status: (result, warnings) => {
+      if (result?.verified !== true) {
+        return {
+          status: "skipped-optional",
+          reason: result?.reason ?? warnings[0] ?? null,
+        };
+      }
+      return result.changed === 1 ? "applied" : "already-applied";
+    },
   },
 ];
 
 module.exports = {
-  applyChatgptCompleteHistoryPatch,
-  applyChatgptHistoryFeedPatch,
-  applyChatgptHistoryPredicatePatch,
   descriptors,
+  discoverCompleteHistoryContracts,
+  hasNativeCompleteHistoryFeed,
   historyPatchMarker,
   historyWarning,
-  mergeConversationLists,
-  tppFeedPatchMarker,
+  patchCompleteHistory,
+  patchQuickChatHistorySource,
 };
