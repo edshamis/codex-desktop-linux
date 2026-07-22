@@ -35,13 +35,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
-- The private `quick-chat-window-zoom` feature now discovers its renderer chunk
-  by the complete Quick Chat contract instead of a generated filename. It
-  requires exactly one semantic match and verifies the zoom root, window scroll
-  coordinates, and responsive footer spacer before reporting success.
-- The opt-in `chatgpt-complete-history` feature now follows the current split
-  ChatGPT history chunks, restoring phone-created and scheduled-run chats in
-  both the full history feed and recent-chat surfaces.
+- Updater rebuild workspaces now retain the Git identity of the wrapper source
+  after `.git` is stripped, so installed build metadata and packaged
+  update-builder metadata report the wrapper commit instead of `unknown`.
+- V2 pets now look toward the live pointer position after successful Linux
+  Computer Use click, scroll, and drag actions, then return to their normal
+  animation. The bridge is isolated per app instance and fails softly when its
+  private runtime socket is unavailable.
+- The updater daemon now detects that a package upgrade replaced its binary
+  on disk and exits with a nonzero status so systemd's `Restart=on-failure`
+  relaunches it on the new binary. Previously a running daemon survived every
+  upgrade and kept staging rebuild workspaces with outdated logic, failing
+  each periodic update until the next reboot.
 - Launcher startup no longer requires Python's pidfd wrappers for normal
   launcher lock acquire and release. Pidfd remains reserved for the
   identity-verified stale Electron termination path.
@@ -163,7 +168,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `~/.config/<appId>/settings.json` as `codex-linux-auto-update-on-exit`, and
   `codex-update-manager` rereads it during reconciliation as an overlay over
   `config.toml` so the in-app preference wins without restarting the service.
-- `codex-update-manager` can now track newer _wrapper_ releases (this repo's own
+- `codex-update-manager` can now track newer *wrapper* releases (this repo's own
   Linux features and fixes) in addition to the upstream Codex DMG. Opt in with
   `enable_wrapper_updates = true` in `config.toml`; a new `check-wrapper`
   subcommand and the `status --json` output report the detected wrapper commit
@@ -227,7 +232,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The in-app updater no longer quits into a broken `pkexec` install path when a
   minimal window-manager session has no graphical polkit authentication agent;
   it keeps the rebuilt package ready and reports a terminal `sudo
-/usr/bin/codex-update-manager ... --path ...` command instead.
+  /usr/bin/codex-update-manager ... --path ...` command instead.
 - The opt-in Linux AppShots bare-modifier shortcuts now require left and right
   modifier keycodes, preventing a fast double-tap on one physical Alt or Shift
   key from opening AppShots.
@@ -339,6 +344,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `make build-app` now rebuilds `better-sqlite3` with an Electron 41-compatible release when the upstream DMG bundles an older native module source.
 - `codex-update-manager` now refreshes CLI status when the daemon starts and shows a desktop notification if the Codex CLI is missing, so package installs do not rely on the user manually checking updater state to understand why Codex Desktop cannot launch cleanly.
 - When the Codex CLI is missing, terminal launches still prompt before installation and GUI launches now have a matching fallback path instead of failing with only a passive notification.
+
 
 ## [0.5.0] - 2026-04-30
 

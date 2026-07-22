@@ -66,11 +66,11 @@ test("frameless-titlebar stays disabled until listed in features.json", () => {
       (descriptor) => descriptor.id === "feature:frameless-titlebar:webview-window-controls-layout",
     );
     assert.match(
-      "app-initial~app-main~projects-index-page~remote-conversation-page-ClV_ycdc.js",
+      "app-initial~artifact-tab-content.electron~notebook-preview-panel~app-main~business-checkout~c1u3yp5s-CMWaEe8R.js",
       webviewPatch.pattern,
     );
     assert.match(
-      "app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27-Cg6hAhRO.js",
+      "app-initial~avatarOverlayCompositionSurface~artifact-tab-content.electron~app-main~appgen-s~j5d6n91g-Cg6hAhRO.js",
       webviewPatch.pattern,
     );
     assert.doesNotMatch(
@@ -214,6 +214,16 @@ test("frameless-titlebar maps Linux window controls chrome to native webview lay
   assert.doesNotMatch(patchedLayout, /right:138/);
 });
 
+test("frameless-titlebar retains standard end padding after the core safe-area patch", () => {
+  assert.equal(
+    applyPatchTwice(
+      applyFramelessTitlebarWebviewPatch,
+      "jsx(slot,{codexLinuxUseWindowControlsSafeArea:!t,side:`end`})",
+    ),
+    "jsx(slot,{codexLinuxUseWindowControlsSafeArea:!1,side:`end`})",
+  );
+});
+
 test("frameless-titlebar reports each current webview sub-contract drift", () => {
   const source = [
     "var eV=Object.freeze({default:Object.freeze({left:0,right:0}),applicationMenu:Object.freeze({left:0,right:138})});",
@@ -237,4 +247,12 @@ test("frameless-titlebar reports each current webview sub-contract drift", () =>
   assert.deepEqual(captureWarnings(() => applyFramelessTitlebarWebviewPatch(chromeDrift)), [
     "WARN: Could not find Linux window controls chrome mapping - skipping frameless webview chrome patch",
   ]);
+
+  assert.deepEqual(
+    captureWarnings(() =>
+      applyFramelessTitlebarWebviewPatch(
+        "jsx(slot,{codexLinuxUseWindowControlsSafeArea:shouldReserveControls,side:`end`})",
+      )),
+    ["WARN: Could not disable the Linux window controls safe area - skipping frameless header padding patch"],
+  );
 });

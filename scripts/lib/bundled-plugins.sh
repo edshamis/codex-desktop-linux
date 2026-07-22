@@ -1021,6 +1021,20 @@ patch_browser_client_iab_socket_scope() {
     fi
 }
 
+patch_browser_client_linux_socket_dir() {
+    local client="$1"
+    local patcher="$SCRIPT_DIR/scripts/lib/patch-browser-client-iab-socket-scope.js"
+
+    if [ ! -f "$patcher" ]; then
+        warn "Browser socket-directory patch helper not found at $patcher; leaving browser-client.mjs unchanged"
+        return 0
+    fi
+
+    if ! node "$patcher" "$client" --socket-dir-only >&2; then
+        warn "Browser socket-directory patch helper failed; leaving browser-client.mjs unchanged"
+    fi
+}
+
 normalize_plugin_script_executable_modes() {
     local target_plugin="$1"
     local scripts_dir="$target_plugin/scripts"
@@ -1066,6 +1080,7 @@ stage_chrome_plugin_from_upstream() {
     patch_browser_use_node_repl_config_shim "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_native_pipe_import_meta_bridge "$target_plugin/scripts/browser-client.mjs"
     patch_browser_use_site_status_allowlist_fallback "$target_plugin/scripts/browser-client.mjs"
+    patch_browser_client_linux_socket_dir "$target_plugin/scripts/browser-client.mjs"
     normalize_plugin_script_executable_modes "$target_plugin"
     if ! install_chrome_extension_host_resource "$target_plugin"; then
         rm -rf "$target_plugin"
@@ -1717,6 +1732,15 @@ fs.writeFileSync(destinationPath, `${JSON.stringify(marketplace, null, 2)}\n`);
 NODE
 }
 
+harden_bundled_plugin_source_tree() {
+    local resources_dir="$INSTALL_DIR/resources"
+    local bundled_plugins_dir="$resources_dir/plugins/openai-bundled"
+
+    [ -d "$bundled_plugins_dir" ] || return 0
+    chmod go-w "$INSTALL_DIR" "$resources_dir" "$resources_dir/plugins"
+    chmod -R u+rwX,go-w "$bundled_plugins_dir"
+}
+
 install_bundled_plugin_resources() {
     local app_dir="$1"
     local upstream_resources="$app_dir/Contents/Resources"
@@ -1789,11 +1813,6 @@ install_bundled_plugin_resources() {
 
     install_linux_executable_resource "$upstream_resources/node" "$resources_dir/node" "node runtime" "info" || true
     install_browser_use_node_repl_resource "$upstream_resources" "$resources_dir/node_repl" || true
-
-    # These files become the trust root for user-cache refreshes at runtime.
-    # Normalize them while staging from the accepted DMG instead of blessing a
-    # potentially modified installed tree during launcher startup.
-    chmod -R u+rwX,go-w "$bundled_plugins_dir"
 
     info "Linux-safe bundled plugins installed"
 }

@@ -270,18 +270,24 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
 
 function applyLinuxMenuPatch(currentSource) {
   const menuRegex = /process\.platform===`win32`&&([A-Za-z_$][\w$]*)\.removeMenu\(\),/g;
+  const linuxMenuPatchFor = (windowVar) =>
+    `process.platform===\`linux\`&&(${windowVar}.on(\`system-context-menu\`,e=>e.preventDefault()),${windowVar}.removeMenu()),`;
   let patchedSource = currentSource
     .replace(
       /process\.platform===`linux`&&\(([A-Za-z_$][\w$]*)\.setMenuBarVisibility\(!1\),\1\.removeMenu\?\.\(\)\),process\.platform===`win32`&&\1\.removeMenu\(\),/g,
-      (_match, windowVar) => `process.platform===\`linux\`&&${windowVar}.removeMenu(),process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
+      (_match, windowVar) => `${linuxMenuPatchFor(windowVar)}process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
     )
     .replace(
       /process\.platform===`linux`&&([A-Za-z_$][\w$]*)\.setMenuBarVisibility\(!1\),process\.platform===`win32`&&\1\.removeMenu\(\),/g,
-      (_match, windowVar) => `process.platform===\`linux\`&&${windowVar}.removeMenu(),process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
+      (_match, windowVar) => `${linuxMenuPatchFor(windowVar)}process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
+    )
+    .replace(
+      /process\.platform===`linux`&&([A-Za-z_$][\w$]*)\.removeMenu\(\),process\.platform===`win32`&&\1\.removeMenu\(\),/g,
+      (_match, windowVar) => `${linuxMenuPatchFor(windowVar)}process.platform===\`win32\`&&${windowVar}.removeMenu(),`,
     );
   let patchedAny = patchedSource !== currentSource;
   patchedSource = patchedSource.replace(menuRegex, (match, windowVar, offset, source) => {
-    const linuxPatch = `process.platform===\`linux\`&&${windowVar}.removeMenu(),`;
+    const linuxPatch = linuxMenuPatchFor(windowVar);
     if (source.slice(Math.max(0, offset - linuxPatch.length), offset) === linuxPatch) {
       return match;
     }
@@ -290,7 +296,7 @@ function applyLinuxMenuPatch(currentSource) {
   });
 
   const hasWindowsRemoveMenu = /process\.platform===`win32`&&[A-Za-z_$][\w$]*\.removeMenu\(\),/.test(patchedSource);
-  const hasLinuxRemoveMenu = /process\.platform===`linux`&&([A-Za-z_$][\w$]*)\.removeMenu\(\),process\.platform===`win32`&&\1\.removeMenu\(\),/.test(patchedSource);
+  const hasLinuxRemoveMenu = /process\.platform===`linux`&&\(([A-Za-z_$][\w$]*)\.on\(`system-context-menu`,[A-Za-z_$][\w$]*=>[A-Za-z_$][\w$]*\.preventDefault\(\)\),\1\.removeMenu\(\)\),process\.platform===`win32`&&\1\.removeMenu\(\),/.test(patchedSource);
   if (!patchedAny && hasWindowsRemoveMenu && !hasLinuxRemoveMenu) {
     console.warn("WARN: Could not find window menu visibility snippet — skipping menu patch");
   }
@@ -617,86 +623,7 @@ function applyLinuxOpaqueBackgroundPatch(currentSource) {
   );
 }
 
-function applyLinuxAboutDialogPatch(currentSource, iconPathExpression) {
-  if (!currentSource.includes("codex.aboutDialog.title")) {
-    return currentSource;
-  }
-
-  const aboutHtmlIconNullSafeRegex =
-    /htmlIconDataUrl:[A-Za-z_$][\w$]*\?\?\(([A-Za-z_$][\w$]*)==null\|\|\1\.isEmpty\(\)\?null:\1\.resize\([^)]*\)\.toDataURL\(\)\),windowIcon:\1\?\?null\}/;
-  const aboutWindowIconNullSafeRegex =
-    /\.\.\.([A-Za-z_$][\w$]*)\.windowIcon==null\|\|\1\.windowIcon\.isEmpty\(\)\?\{\}:\{icon:\1\.windowIcon\}/;
-  const aboutHtmlIconUnsafeRegex =
-    /htmlIconDataUrl:([A-Za-z_$][\w$]*)\?\?\(([A-Za-z_$][\w$]*)\.isEmpty\(\)\?null:\2\.resize\(([^)]*)\)\.toDataURL\(\)\),windowIcon:\2\}/;
-  const aboutWindowIconUnsafeRegex =
-    /\.\.\.([A-Za-z_$][\w$]*)\.windowIcon\.isEmpty\(\)\?\{\}:\{icon:\1\.windowIcon\}/;
-  const safeCurrentFileIconRegex =
-    /\[[A-Za-z_$][\w$]*\?[A-Za-z_$][\w$]*\([^()]+\):null,[A-Za-z_$][\w$]*\?[A-Za-z_$][\w$]*\.nativeImage\.createFromPath\([^()]+\):[A-Za-z_$][\w$]*\.app\.getFileIcon\([^()]+,\{size:`normal`\}\)\.catch\(\(\)=>null\)\]/;
-  const safeBundledIconRegex =
-    iconPathExpression == null
-      ? null
-      : new RegExp(
-          `\\[\\s*process\\.platform===\`linux\`\\?null:[A-Za-z_$][\\w$]*\\?[A-Za-z_$][\\w$]*\\([^()]+\\):null,\\s*process\\.platform===\`linux\`\\?Promise\\.resolve\\(\\(\\(\\)=>\\{let __codexLinuxAboutIcon=[A-Za-z_$][\\w$]*\\.nativeImage\\.createFromPath\\(${escapeRegExp(iconPathExpression)}\\);return __codexLinuxAboutIcon\\.isEmpty\\(\\)\\?null:__codexLinuxAboutIcon\\}\\)\\(\\)\\):[A-Za-z_$][\\w$]*\\?[A-Za-z_$][\\w$]*\\.nativeImage\\.createFromPath\\([^()]+\\):[A-Za-z_$][\\w$]*\\.app\\.getFileIcon\\([^()]+,\\{size:\`normal\`\\}\\)\\.catch\\(\\(\\)=>null\\)\\s*\\]`,
-        );
-  const iconSourceReady =
-    iconPathExpression == null
-      ? safeCurrentFileIconRegex.test(currentSource)
-      : safeBundledIconRegex.test(currentSource);
-  if (
-    iconSourceReady &&
-    aboutHtmlIconNullSafeRegex.test(currentSource) &&
-    aboutWindowIconNullSafeRegex.test(currentSource)
-  ) {
-    return currentSource;
-  }
-
-  const currentAboutIconPromiseRegex =
-    /\[([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\(([^()]+)\):null,([A-Za-z_$][\w$]*)\?([A-Za-z_$][\w$]*)\.nativeImage\.createFromPath\(([^()]+)\):([A-Za-z_$][\w$]*)\.app\.getFileIcon\(([^()]+),\{size:`normal`\}\)\]/;
-  if (
-    !currentAboutIconPromiseRegex.test(currentSource) ||
-    !aboutHtmlIconUnsafeRegex.test(currentSource) ||
-    !aboutWindowIconUnsafeRegex.test(currentSource)
-  ) {
-    console.warn("WARN: Could not patch About dialog icon fallback for Linux");
-    return currentSource;
-  }
-
-  let patchedSource = currentSource;
-  if (iconPathExpression != null) {
-    patchedSource = patchedSource.replace(
-      currentAboutIconPromiseRegex,
-      `[
-process.platform===\`linux\`?null:$1?$2($3):null,
-process.platform===\`linux\`?Promise.resolve((()=>{let __codexLinuxAboutIcon=$5.nativeImage.createFromPath(${iconPathExpression});return __codexLinuxAboutIcon.isEmpty()?null:__codexLinuxAboutIcon})()):$4?$5.nativeImage.createFromPath($6):$7.app.getFileIcon($8,{size:\`normal\`}).catch(()=>null)
-]`,
-    );
-  } else {
-    patchedSource = patchedSource.replace(
-      currentAboutIconPromiseRegex,
-      "[$1?$2($3):null,$4?$5.nativeImage.createFromPath($6):$7.app.getFileIcon($8,{size:`normal`}).catch(()=>null)]",
-    );
-  }
-
-  patchedSource = patchedSource
-    .replace(
-      aboutHtmlIconUnsafeRegex,
-      "htmlIconDataUrl:$1??($2==null||$2.isEmpty()?null:$2.resize($3).toDataURL()),windowIcon:$2??null}",
-    )
-    .replace(
-      aboutWindowIconUnsafeRegex,
-      "...$1.windowIcon==null||$1.windowIcon.isEmpty()?{}:{icon:$1.windowIcon}",
-    );
-
-  if (patchedSource !== currentSource) {
-    return patchedSource;
-  }
-
-  console.warn("WARN: Could not patch About dialog icon fallback for Linux");
-  return currentSource;
-}
-
 module.exports = {
-  applyLinuxAboutDialogPatch,
   applyLinuxAppReloadShortcutsPatch,
   applyLinuxApplicationMenuPatch,
   applyLinuxMenuPatch,

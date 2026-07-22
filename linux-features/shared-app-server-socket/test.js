@@ -3,7 +3,7 @@
 
 const assert = require("node:assert/strict");
 const { spawn, spawnSync } = require("node:child_process");
-const { EventEmitter } = require("node:events");
+const { EventEmitter, once } = require("node:events");
 const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
@@ -175,13 +175,14 @@ async function closeServer(server) {
 
 function syntheticBundle() {
   return [
-    "var Ky=class{kind=`websocket`;proxyStreams=new Set;supportsReconnect(){return!0}",
+    "var Ky=class{options;kind=`websocket`;logger=r.i(`AppServerTransportSshWebsocket`);proxyStreams=new Set;supportsReconnect(){return!0}",
     "async connect(){let t={current:null},r=new n.zn(Fy,{perMessageDeflate:!1,createConnection:()=>",
     "(t.current=this.createSshProxyStream(),t.current)});return n.Ln(r,{onPongTimeout:()=>r.terminate()}),new n.Rn(r)}};",
     "function n6(e){let t=Jy(e.hostConfig);if(t)return Z.info(`selected app-server transport`),new Ky(t);",
     "if(e.transportKind===`remote-control`)return new Remote(e);",
-    "if(n.io(e.hostConfig))return new Wsl(e);",
-    "let r=r6(e.hostConfig);return r?new n.Fn({websocketUrl:r}):new n.Nn(e)}function afterFactory(){}",
+    "if(n.io(e.hostConfig))return new Wsl({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator});",
+    "let r=r6(e.hostConfig);if(r){e.desktopAuthAppServerClient;let t=p8(e.hostConfig,r);return new n.Fn({hostConfig:e.hostConfig,websocketUrl:r,getWebsocketProtocols:void 0,...t==null?{}:{socksProxyUrl:t}})}",
+    "return new n.Nn({hostConfig:e.hostConfig,repoRoot:e.repoRoot,resourcesPath:e.resourcesPath,defaultOriginator:e.defaultOriginator})}function afterFactory(){}",
   ].join("");
 }
 
@@ -224,6 +225,8 @@ test("patch selects the bridge only for the local host and is idempotent", () =>
   assert.match(patched, /await this\.ensureAuthority\(\)/);
   assert.match(patched, /e\.once\(`close`,t\);try\{e\.kill\(\)/);
   assert.match(patched, /openSync\(this\.lockPath,`wx`,384\)/);
+  assert.match(patched, /\/proc\/\$\{e\}\/stat/);
+  assert.match(patched, /reclaimStaleLock/);
   assert.match(patched, /this\.sameIdentity\(this\.socketIdentity,e\)/);
   assert.match(patched, /requires CODEX_CLI_PATH/);
   assert.match(patched, /new n\.zn\(Fy,/);
@@ -243,6 +246,22 @@ test("patch leaves unsupported bundle shapes unchanged with a warning", () => {
   assert.match(warnings.join("\n"), /shared app-server socket/i);
 });
 
+test("patch rejects the previous SSH transport class shape", () => {
+  const source = syntheticBundle().replace(
+    "class{options;kind=`websocket`;logger=r.i(`AppServerTransportSshWebsocket`);",
+    "class{kind=`websocket`;",
+  );
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => warnings.push(args.join(" "));
+  try {
+    assert.equal(applySharedAppServerSocketPatch(source), source);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.match(warnings.join("\n"), /SSH WebSocket transport/);
+});
+
 test("descriptor is optional and targets the main bundle", () => {
   assert.deepEqual(
     descriptors.map(({ id, phase, ciPolicy }) => [id, phase, ciPolicy]),
@@ -258,6 +277,7 @@ test("socket hook exports an instance-scoped path without starting a process", (
     CODEX_LINUX_APP_STATE_DIR: path.join(tempDir, "state"),
     XDG_RUNTIME_DIR: tempDir,
   };
+  delete env.CODEX_LINUX_APP_SERVER_BRIDGE_SOCKET;
   try {
     const result = spawnSync(socketEnvHook, [], { encoding: "utf8", env });
     assert.equal(result.status, 0, result.stderr);
@@ -303,8 +323,23 @@ test("injected transport serializes startup and removes only its owned socket", 
   const servers = new Map();
   const children = [];
   let replacement;
-  let installReplacementBeforeClose = false;
+  let replacementError;
+  let installReplacementBeforeChildClose = false;
+  const identityFs = {
+    ...fs,
+    lstatSync(candidate, ...args) {
+      const stat = fs.lstatSync(candidate, ...args);
+      if (candidate !== socketPath || !installReplacementBeforeChildClose) return stat;
+      return new Proxy(stat, {
+        get(target, property, receiver) {
+          if (property === "ino") return target.ino + 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    },
+  };
   const { Transport } = loadInjectedTransport({
+    fsImpl: identityFs,
     spawnImpl(_command, args) {
       const child = fakeChild();
       children.push(child);
@@ -315,9 +350,19 @@ test("injected transport serializes startup and removes only its owned socket", 
         child.kill = () => {
           child.killed = true;
           child.signalCode = "SIGTERM";
-          server.close(async () => {
-            if (installReplacementBeforeClose) replacement = await listenUnix(target);
-            child.emit("close", null, "SIGTERM");
+          server.close(() => {
+            setImmediate(() => {
+              Promise.resolve()
+                .then(async () => {
+                  if (installReplacementBeforeChildClose) replacement = await listenUnix(target);
+                })
+                .catch((error) => {
+                  replacementError = error;
+                })
+                .finally(() => {
+                  child.emit("close", null, "SIGTERM");
+                });
+            });
           });
           return true;
         };
@@ -334,9 +379,11 @@ test("injected transport serializes startup and removes only its owned socket", 
     assert.equal(fs.existsSync(`${socketPath}.lock`), true);
     await assert.rejects(second.ensureAuthority(), /already owned/);
 
-    installReplacementBeforeClose = true;
+    installReplacementBeforeChildClose = true;
+    const childClosed = once(children[0], "close");
     first.dispose();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await childClosed;
+    assert.ifError(replacementError);
     assert.equal(fs.lstatSync(socketPath).isSocket(), true, "replacement socket must survive dispose");
     await closeServer(replacement);
   } finally {
@@ -392,11 +439,13 @@ test("injected transport shares one readiness promise across concurrent connecti
   }
 });
 
-test("injected transport fails closed on a pre-existing lock", async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-stale-lock-"));
+test("injected transport fails closed on a live owner's lock", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-live-lock-"));
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
-  fs.writeFileSync(lockPath, "preserved\n", { mode: 0o600 });
+  const selfStat = fs.readFileSync(`/proc/${process.pid}/stat`, "utf8");
+  const selfStartTime = selfStat.slice(selfStat.lastIndexOf(")") + 2).trim().split(/\s+/)[19];
+  fs.writeFileSync(lockPath, `${process.pid} ${selfStartTime}\n`, { mode: 0o600 });
   let spawnCalls = 0;
   const { Transport } = loadInjectedTransport({
     spawnImpl() {
@@ -410,7 +459,7 @@ test("injected transport fails closed on a pre-existing lock", async () => {
   try {
     await assert.rejects(transport.ensureAuthority(), /already owned/);
     assert.equal(spawnCalls, 0);
-    assert.equal(fs.readFileSync(lockPath, "utf8"), "preserved\n");
+    assert.equal(fs.readFileSync(lockPath, "utf8"), `${process.pid} ${selfStartTime}\n`);
   } finally {
     if (originalCli == null) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCli;
@@ -418,7 +467,82 @@ test("injected transport fails closed on a pre-existing lock", async () => {
   }
 });
 
-test("injected transport preserves a replacement lock inode", () => {
+test("injected transport reclaims a dead owner's lock when no socket exists", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-dead-lock-"));
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const lockPath = `${socketPath}.lock`;
+  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+  const transport = new Transport(socketPath);
+  try {
+    await transport.acquireOwnership();
+    assert.match(fs.readFileSync(lockPath, "utf8"), new RegExp(`^${process.pid} \\d+\\n$`));
+    transport.releaseOwnedPaths();
+    assert.equal(fs.existsSync(lockPath), false);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("injected transport preserves a dead owner's lock while its socket is live", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-orphan-socket-"));
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const lockPath = `${socketPath}.lock`;
+  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+  const server = await listenUnix(socketPath);
+  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+  try {
+    await assert.rejects(new Transport(socketPath).acquireOwnership(), /already owned/);
+    assert.equal(fs.readFileSync(lockPath, "utf8"), "99999999 1\n");
+    assert.equal(fs.lstatSync(socketPath).isSocket(), true);
+  } finally {
+    await closeServer(server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("injected transport reclaims a dead owner's unbound socket inode", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-stale-socket-"));
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const stalePath = `${socketPath}.stale`;
+  const lockPath = `${socketPath}.lock`;
+  fs.writeFileSync(lockPath, "99999999 1\n", { mode: 0o600 });
+  const server = await listenUnix(socketPath);
+  fs.renameSync(socketPath, stalePath);
+  await closeServer(server);
+  fs.renameSync(stalePath, socketPath);
+  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+  const transport = new Transport(socketPath);
+  try {
+    await transport.acquireOwnership();
+    assert.equal(fs.existsSync(socketPath), false);
+    assert.match(fs.readFileSync(lockPath, "utf8"), new RegExp(`^${process.pid} \\d+\\n$`));
+    transport.releaseOwnedPaths();
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("injected transport reclaims an old legacy lock but preserves a recent one", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-legacy-lock-"));
+  const socketPath = path.join(tempDir, "app-server.sock");
+  const lockPath = `${socketPath}.lock`;
+  const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
+  try {
+    fs.writeFileSync(lockPath, "", { mode: 0o600 });
+    await assert.rejects(new Transport(socketPath).acquireOwnership(), /already owned/);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(lockPath, old, old);
+    const transport = new Transport(socketPath);
+    await transport.acquireOwnership();
+    assert.match(fs.readFileSync(lockPath, "utf8"), new RegExp(`^${process.pid} \\d+\\n$`));
+    transport.releaseOwnedPaths();
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("injected transport preserves a replacement lock inode", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-lock-replace-"));
   const socketPath = path.join(tempDir, "app-server.sock");
   const lockPath = `${socketPath}.lock`;
@@ -426,7 +550,7 @@ test("injected transport preserves a replacement lock inode", () => {
   const { Transport } = loadInjectedTransport({ spawnImpl: () => fakeChild() });
   const transport = new Transport(socketPath);
   try {
-    transport.acquireOwnership();
+    await transport.acquireOwnership();
     fs.renameSync(lockPath, oldLockPath);
     fs.writeFileSync(lockPath, "replacement\n", { mode: 0o600 });
     transport.releaseOwnedPaths();
@@ -521,7 +645,7 @@ test("normal authority exit releases its owned socket and lock", async () => {
   }
 });
 
-test("disposing during startup waits for child close before releasing ownership", async () => {
+test("disposing before async startup resumes releases ownership without spawning", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "shared-app-server-dispose-startup-"));
   const socketPath = path.join(tempDir, "app-server.sock");
   const child = fakeChild();
@@ -537,9 +661,10 @@ test("disposing during startup waits for child close before releasing ownership"
   try {
     const startup = transport.ensureAuthority();
     transport.dispose();
-    assert.equal(fs.existsSync(`${socketPath}.lock`), true);
-    await assert.rejects(startup, /exited before socket creation/);
     assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+    await assert.rejects(startup, /disposed during startup/);
+    assert.equal(fs.existsSync(`${socketPath}.lock`), false);
+    assert.equal(child.signalCode, null);
   } finally {
     if (originalCli == null) delete process.env.CODEX_CLI_PATH;
     else process.env.CODEX_CLI_PATH = originalCli;

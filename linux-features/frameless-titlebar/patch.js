@@ -81,6 +81,15 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
   const recognizedApplicationMenuLayout =
     foundApplicationMenuLayout || patchedSource.includes("applicationMenu:Object.freeze({left:0,right:0})");
 
+  const headerSafeAreaProp = "codexLinuxUseWindowControlsSafeArea";
+  const hasHeaderSafeArea = currentSource.includes(headerSafeAreaProp);
+  patchedSource = patchedSource.replace(
+    new RegExp(`${headerSafeAreaProp}:![A-Za-z_$][\\w$]*,side:\`end\``, "g"),
+    `${headerSafeAreaProp}:!1,side:\`end\``,
+  );
+  const recognizedHeaderSafeArea =
+    !hasHeaderSafeArea || patchedSource.includes(`${headerSafeAreaProp}:!1,side:\`end\``);
+
   const linuxApplicationMenuChrome = "case`win32`:case`linux`:return`application-menu`";
   const linuxNativeChrome = "case`win32`:return`application-menu`;case`linux`:return`native`";
   const foundApplicationMenuChrome = patchedSource.includes(linuxApplicationMenuChrome);
@@ -129,12 +138,16 @@ function applyFramelessTitlebarWebviewPatch(currentSource) {
   if (hasApplicationMenuLayout && !recognizedApplicationMenuBridge) {
     console.warn("WARN: Could not find application menu bridge guard - skipping frameless webview bridge patch");
   }
+  if (hasHeaderSafeArea && !recognizedHeaderSafeArea) {
+    console.warn("WARN: Could not disable the Linux window controls safe area - skipping frameless header padding patch");
+  }
   if (hasApplicationMenuChromeConsumer && !recognizedChromeMapping) {
     console.warn("WARN: Could not find Linux window controls chrome mapping - skipping frameless webview chrome patch");
   }
   if (
     !hasApplicationMenuLayout &&
     !hasApplicationMenuChromeConsumer &&
+    !hasHeaderSafeArea &&
     !recognizedChromeMapping
   ) {
     console.warn("WARN: Could not identify frameless titlebar webview target - skipping frameless webview patch");
@@ -156,8 +169,7 @@ const patches = [
     phase: "webview-asset",
     order: 20_730,
     ciPolicy: "optional",
-    pattern:
-      /^(?:app-initial~app-main~projects-index-page~remote-conversation-page|app-initial~app-main~pull-request-route~new-thread-panel-page~onboarding-page~settings-page~i2dgsl27)-[^.]+\.js$/,
+    pattern: /^app-initial~(?:artifact-tab-content\.electron~notebook-preview-panel~app-main~business-checkout~c1u3yp5s|avatarOverlayCompositionSurface~artifact-tab-content\.electron~app-main~appgen-s~j5d6n91g)-[^.]+\.js$/,
     missingDescription: "main app chrome bundle",
     skipDescription: "frameless titlebar webview layout patch",
     apply: applyFramelessTitlebarWebviewPatch,

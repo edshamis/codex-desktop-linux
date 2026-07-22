@@ -3,6 +3,8 @@ let
   supportedFeatureIds = [
     "appshots"
     "chatgpt-complete-history"
+    "codex-wrapper-updater"
+    "directory-only-working-tree-watch"
     "frameless-titlebar"
     "global-dictation"
     "mcp-helper-reaper"
@@ -11,7 +13,10 @@ let
     "persistent-status-panel"
     "pet-overlay"
     "quick-chat-window-zoom"
+    "remote-control-ui"
     "remote-mobile-control"
+    "shallow-repository-watches"
+    "ui-tweaks"
   ];
 
   sortAndDeduplicate = featureIds:
