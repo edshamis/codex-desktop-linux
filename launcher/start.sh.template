@@ -80,11 +80,7 @@ APP_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$CODEX_LINUX_APP_ID"
 configure_runtime_tmpdir() {
     [ -z "${TMPDIR:-}" ] || return 0
 
-    if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ -d "$XDG_RUNTIME_DIR" ] && [ -w "$XDG_RUNTIME_DIR" ]; then
-        TMPDIR="$XDG_RUNTIME_DIR/$CODEX_LINUX_APP_ID/tmp"
-    else
-        TMPDIR="$APP_STATE_DIR/tmp"
-    fi
+    TMPDIR="$APP_STATE_DIR/tmp"
     mkdir -p "$TMPDIR"
     chmod 700 "$TMPDIR"
     export TMPDIR
