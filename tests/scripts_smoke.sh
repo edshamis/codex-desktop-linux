@@ -4176,7 +4176,7 @@ SCRIPT
 }
 
 test_launcher_uses_private_default_tmpdir() {
-    info "Checking launcher default TMPDIR isolation"
+    info "Checking launcher disk-backed default TMPDIR isolation"
     local workspace="$TMP_DIR/launcher-private-tmpdir"
     local probe="$workspace/probe.sh"
     local output="$workspace/output.log"
@@ -4203,14 +4203,16 @@ SCRIPT
     chmod +x "$probe"
 
     env -u TMPDIR XDG_RUNTIME_DIR="$runtime_dir" bash "$probe" > "$output"
-    [ "$(cat "$output")" = "$runtime_dir/codex-desktop/tmp" ] \
-        || fail "Expected runtime-scoped default TMPDIR, got: $(cat "$output")"
-    [ "$(stat -c '%a' "$runtime_dir/codex-desktop/tmp")" = "700" ] \
-        || fail "Expected runtime-scoped TMPDIR mode 700"
+    [ "$(cat "$output")" = "$state_dir/tmp" ] \
+        || fail "Expected state-scoped default TMPDIR, got: $(cat "$output")"
+    [ "$(stat -c '%a' "$state_dir/tmp")" = "700" ] \
+        || fail "Expected state-scoped TMPDIR mode 700"
+    [ ! -e "$runtime_dir/codex-desktop/tmp" ] \
+        || fail "Default TMPDIR must not consume XDG_RUNTIME_DIR tmpfs"
 
     env -u TMPDIR -u XDG_RUNTIME_DIR bash "$probe" > "$output"
     [ "$(cat "$output")" = "$state_dir/tmp" ] \
-        || fail "Expected state-scoped fallback TMPDIR, got: $(cat "$output")"
+        || fail "Expected state-scoped default TMPDIR without XDG_RUNTIME_DIR, got: $(cat "$output")"
 
     TMPDIR="$custom_tmp" XDG_RUNTIME_DIR="$runtime_dir" bash "$probe" > "$output"
     [ "$(cat "$output")" = "$custom_tmp" ] \
