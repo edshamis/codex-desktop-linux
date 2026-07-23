@@ -49,20 +49,36 @@ jobs:
           git merge --no-edit upstream/main
           echo 'changed=true' >> "$GITHUB_OUTPUT"
 
-      - name: Test private Quick Chat feature
-        if: steps.merge.outputs.changed == 'true'
-        run: node --test linux-features/local/quick-chat-window-zoom/test.js
+      - name: Select validation scope
+        id: validation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_CHANGED: ${{ steps.merge.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ "$MERGE_CHANGED" == "true" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Test private Linux features
+        if: steps.validation.outputs.run == 'true'
+        run: |
+          node --test \
+            linux-features/chatgpt-complete-history/test.js \
+            linux-features/local/quick-chat-window-zoom/test.js
 
       - name: Test the complete patch engine
-        if: steps.merge.outputs.changed == 'true'
+        if: steps.validation.outputs.run == 'true'
         run: node --test scripts/patch-linux-window-ui.test.js
 
       - name: Install Nix
-        if: steps.merge.outputs.changed == 'true'
+        if: steps.validation.outputs.run == 'true'
         uses: cachix/install-nix-action@v31
 
       - name: Evaluate the merged Nix flake
-        if: steps.merge.outputs.changed == 'true'
+        if: steps.validation.outputs.run == 'true'
         run: nix flake check --no-build --print-build-logs
 
       - name: Publish the validated private branch
